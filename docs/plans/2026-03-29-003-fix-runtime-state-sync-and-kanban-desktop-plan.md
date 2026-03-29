@@ -1,359 +1,457 @@
 ---
 date: 2026-03-29
+deepened: 2026-03-30
 sequence: 003
 type: fix
-status: completed
+status: active
 source: docs/brainstorms/2026-03-29-runtime-state-sync-and-kanban-desktop-requirements.md
 ---
 
-# fix: Restore Runtime State Sync And Redesign Desktop Kanban
+# fix: Restore Runtime State Sync And Harden Desktop Execution Protocol
 
 ## Problem Frame
-当前问题分成两层，但必须按顺序处理。
+这轮不是重新设计产品，而是在已经交付的 desktop 看板基线之上，修掉两类仍然破坏可信度的运行时问题。
 
-第一层是运行正确性：agent 实际已经执行、日志里甚至能看出“任务完成”，但 task 仍停在 `executing`，current attempt 仍停在 `running / plan`。这会破坏 desktop 与 CLI 对 runtime 真相的信任，也会让后续 GUI 重构建立在错误状态之上。
+第一类是执行真相仍不可靠。任务可能在日志里看起来已经完成，但 task 仍停在 `executing`，current attempt 仍停在 `running / plan`。`abort` 也可能只是点亮了按钮，却没有真正终止底层进程树。这说明当前 runtime 仍然过度依赖 agent stdout marker 和壳层进程退出，缺少一个稳定的 attempt 级结果协议。
 
-第二层是 desktop 信息架构：当前主界面同时承载创建表单、任务列表、详情面板和日志区。它更像调试台，不像任务看板。用户已经明确要切成“纯看板主界面 + 创建弹窗 + 任务详情弹窗 + 会话详情弹窗”的结构，并且看板列采用用户视角分组，而不是原始状态直出。
+第二类是协议边界需要为后续“自定义任务步骤 + 自定义每步 prompt”留出生存空间。未来允许自定义业务步骤，但 runtime 不能把最终成功/失败判定继续绑在 agent 的自然语言输出上。结果协议必须固定在 wrapper 层，业务 prompt 可以变，机器协议不能变。
+
+desktop 的六列表格、创建弹窗、任务详情弹窗、session 二级弹窗已经是既有基线。这轮只补运行正确性和失败可见性，不重新发明 UI 壳。
 
 ## Origin and Scope
 
 ### Origin Document
-- [docs/brainstorms/2026-03-29-runtime-state-sync-and-kanban-desktop-requirements.md](D:\Code\Projects\tasks-dispatcher\docs\brainstorms\2026-03-29-runtime-state-sync-and-kanban-desktop-requirements.md)
+- [2026-03-29-runtime-state-sync-and-kanban-desktop-requirements.md](/D:/Code/Projects/tasks-dispatcher/docs/brainstorms/2026-03-29-runtime-state-sync-and-kanban-desktop-requirements.md)
 
 ### In Scope
-- runtime 最终状态推进与 attempt stage/status 同步
-- 执行结束后的 desktop 刷新与 log 读取韧性
-- desktop 主界面重构为用户视角分组看板
-- 新建任务弹窗、任务详情弹窗、会话详情弹窗
-- 会话列表、日志折叠、独立滚动、列内排序
+- 引入固定 wrapper 执行边界，替换“只靠 agent stdout marker 猜结果”的最终收口方式
+- 为每个 attempt 增加正式结果文件协议，并以 `结果文件有效 + wrapper exit code = 0` 作为成功判定
+- 将 `protocol_failure` 纳入 attempt termination reason、事件流和 GUI 展示
+- 将 `abort` 改成强一致语义，只有真实 agent 进程树已停止才落 `manually_aborted`
+- 让 desktop 在 `protocol_failure` / `manually_aborted` 下继续稳定收敛，并在 `Failed` 列与详情层展示失败原因
 
 ### Out of Scope
-- 拖拽换列、拖拽排序、拖拽手势
-- 新 workflow 系统、过滤器系统、多人协作或权限
-- CLI UX 改版
-- 任务领域状态机业务规则的大改
+- 自定义步骤工作流本身
+- 步骤级结果协议
+- 重新设计 six-column board、Add Task、task/session modal 的基础信息架构
+- 拖拽交互、过滤器、多用户能力
+- 对 CLI 单独做第二套状态机或数据库直读旁路
 
 ## Requirements Trace
 
 | Area | Covered Requirements | Planning Consequence |
 | --- | --- | --- |
-| Execution correctness | R1-R5 | 必须先修 runtime 收口 contract、attempt 同步与 renderer 最终刷新，再动 UI 结构 |
-| Board model | R6-R10b, R14-R15, R21 | desktop 需要从单列列表切到固定六列用户态看板，并把卡片交互和排序写死为主界面规则 |
-| Detail flows | R11-R13, R16-R20 | 任务详情必须分层：无 attempt 时轻量；有 attempt 时先会话列表，再进二级会话详情弹窗；长日志默认折叠且独立滚动 |
+| Attempt result protocol | R1-R5g | 需要把最终成功/失败判定从 marker-centric 收口改成 wrapper-centric 收口，并让 `ExecutionCoordinator` 成为唯一裁决点 |
+| Runtime ownership and convergence | R1-R4, R5f-R5g | 不能新开平行执行架构；必须沿现有 `AgentRuntime -> runner -> coordinator -> DTO` 主干扩展 |
+| Failure visibility in desktop | R12, R15a, R17-R20a | `protocol_failure` / `manually_aborted` 仍进 `Failed` 列，但卡片、session 列表和 session 详情需要能看出失败原因 |
+| Existing desktop shell baseline | R6-R11, R13-R21 | 视为已完成基线；只在失败原因可见性和 modal 叠加返回路径上补齐，不再重做壳层 |
 
 ## Context and Research
 
 ### Local Research
-- [ExecutionCoordinator.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/dispatching/ExecutionCoordinator.ts) 现在只在 `supervisor.onExit -> #settleTask()` 时推进最终状态，因此“日志看起来结束了”本身不会改变 task state。
-- [AgentPromptFactory.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/agents/AgentPromptFactory.ts) 已要求 agent 输出 `TASKS_DISPATCHER_STAGE:complete`，但 [AgentProcessSupervisor.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/dispatching/AgentProcessSupervisor.ts) 目前并不消费这个 marker。
-- [TaskBoardPage.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/pages/TaskBoardPage.tsx) 当前仍以单个 `selectedTask` + 常驻详情/日志区为中心，不适合直接承载看板、任务弹窗和会话二级弹窗。
-- [TaskList.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskList.tsx) 当前是单列列表；[TaskComposer.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskComposer.tsx) 当前是常驻表单；[TaskDetailPane.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskDetailPane.tsx) 与 [TaskLogStream.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskLogStream.tsx) 当前是页面常驻信息块。
-- [TaskStatusActions.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskStatusActions.tsx) 已经收口了按状态显示按钮的逻辑，是这次 desktop 重构里最值得复用的组件之一。
-- [ExecutionCoordinator.test.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/tests/dispatching/ExecutionCoordinator.test.ts) 已覆盖“fake 脚本正常退出 -> `pending_validation`”，但还没覆盖“complete marker 可见、进程未及时关闭、stage marker 不完整、renderer 最终刷新”这些更接近真实 CLI 的情况。
+- [AgentRuntime.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/agents/AgentRuntime.ts) 现在的 launch spec 只有 `command / args / stdinText`，是最自然的 wrapper 接入点。
+- [CodexCliRuntime.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/agents/CodexCliRuntime.ts) 和 [ClaudeCodeRuntime.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/agents/ClaudeCodeRuntime.ts) 目前直接启动真实 agent，没有 wrapper 边界。
+- [NodeChildProcessRunner.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/agents/NodeChildProcessRunner.ts) 是统一启动点，但不该承担结果协议解释职责；它应该执行 launch spec，而不是推断结果。
+- [ExecutionCoordinator.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/dispatching/ExecutionCoordinator.ts) 是当前唯一最终 settle 点。新协议的消费和最终裁决必须继续收口在这里。
+- [WorkspaceRuntimeService.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/server/WorkspaceRuntimeService.ts) 更适合作为 wiring 层，不适合承担 wrapper 结果解析。
+- [TaskAttempt.ts](/D:/Code/Projects/tasks-dispatcher/packages/core/src/domain/TaskAttempt.ts) 当前 termination reasons 只有 `process_exit_non_zero`、`signal_terminated`、`startup_failed`、`manually_aborted`，还没有 `protocol_failure`。
+- [TaskEvent.ts](/D:/Code/Projects/tasks-dispatcher/packages/core/src/domain/TaskEvent.ts) 当前只有 `execution_failed` 和 `task_aborted` 两种失败类事件。沿当前分层语义，`protocol_failure` 可以先继续走 `execution_failed`，把细分原因放在 attempt termination reason。
+- [TaskDtos.ts](/D:/Code/Projects/tasks-dispatcher/packages/core/src/contracts/TaskDtos.ts) 的 detail DTO 已能承载新的 termination reason；summary DTO 目前不能，因此若 board 卡片要显示失败细分原因，需要补 summary 层 failure hint。
+- [WorkspacePaths.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/bootstrap/WorkspacePaths.ts) 当前只有 logs/runtime metadata 路径；attempt 结果文件需要新增统一路径管理。
+- [001_initial_schema.sql](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/persistence/migrations/001_initial_schema.sql) 中 `termination_reason` 和 `task_events.type` 都是 `TEXT`，数据库结构本身不阻塞引入 `protocol_failure`，但模型常量、round-trip 测试和事件语义需要补。
+- [TaskCard.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskCard.tsx)、[TaskSessionList.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskSessionList.tsx)、[TaskSessionDetailModal.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskSessionDetailModal.tsx) 是 failure reason 可见性的主要前端落点。
 
 ### Institutional Learnings
-- [single-workspace-runtime-owner-2026-03-29.md](D:\Code\Projects\tasks-dispatcher\docs\solutions\best-practices\single-workspace-runtime-owner-2026-03-29.md) 要求 CLI 与 desktop 都通过同一个 workspace runtime owner 访问状态；修复状态同步不能把 desktop 变成直接读写 SQLite 的特例。
-- [windows-codex-process-launch-gotchas-2026-03-29.md](D:\Code\Projects\tasks-dispatcher\docs\solutions\integration-issues\windows-codex-process-launch-gotchas-2026-03-29.md) 说明 Codex 在 Windows 上的进程收口要格外保守，任何执行完成判定都不能重新引入脆弱的 shell 启动或 prompt split 行为。
+- [single-workspace-runtime-owner-2026-03-29.md](/D:/Code/Projects/tasks-dispatcher/docs/solutions/best-practices/single-workspace-runtime-owner-2026-03-29.md)
+  runtime 真相必须继续由共享 runtime owner 提供，不能让 desktop 为了收口结果而直接读 SQLite。
+- [task-vs-task-attempt-boundary-2026-03-29.md](/D:/Code/Projects/tasks-dispatcher/docs/solutions/best-practices/task-vs-task-attempt-boundary-2026-03-29.md)
+  `protocol_failure` 和 `manually_aborted` 应继续留在 attempt 维度，不能重新污染 task 级模型。
+- [windows-codex-process-launch-gotchas-2026-03-29.md](/D:/Code/Projects/tasks-dispatcher/docs/solutions/integration-issues/windows-codex-process-launch-gotchas-2026-03-29.md)
+  Windows 下 `cmd.exe -> codex.cmd -> real process` 的包装链说明 `abort` 必须按进程树思路收口，而不能只发一个轻量 kill。
 
 ### External Research
-- 不做额外外部研究。当前问题集中在仓内 runtime contract 与 desktop 信息架构，并且本地模式和现有实现已经给了足够约束。
+- 不做额外外部研究。当前问题由仓内协议边界和现有 runtime 结构决定，本地证据已经足够支撑 planning。
 
 ### Planning Implications
-- 这次工作应拆成“Phase 1 运行正确性”和“Phase 2 desktop 重构”两个连续但边界清晰的实现段。
-- 对 Phase 1，执行完成判定需要采用混合策略：进程退出仍是最终 truth source 之一，但 `TASKS_DISPATCHER_STAGE:complete` 不应继续被忽略。
-- 对 Phase 2，当前页面编排基本需要重写，但任务动作逻辑、DTO 形状和一部分展示组件可以复用。
+- 这次 planning 是对既有 003 计划的 deepening，不是新主题。desktop 壳层视为已完成基线，新增实现单元集中在执行协议和失败可见性。
+- `TASKS_DISPATCHER_STAGE:*` marker 仍可保留为阶段观测信号，但不再承担 attempt 最终成败判定。
+- 最终成功 contract 现在是三层分工：
+  - wrapper 负责生成正式结果文件并以退出码结束
+  - runtime 负责读取结果文件并裁决最终状态
+  - agent 只负责执行业务内容，不对最终状态拥有裁决权
 
 ## Execution Posture
-- Characterization-first for Phase 1。先补“状态不同步”的回归测试，再改 runtime 收口逻辑。
-- Phase 2 再进入 UI 重构。不要在修 runtime 真相前开始看板界面重排。
-- 对 UI 单元采用组件测试 + 一条 desktop smoke 验证，不把全部交互都塞进一个超重端到端测试。
+- Characterization-first。先补当前 `executing` 卡死、`abort` 无效、failure reason 不可见的回归测试，再动协议和进程控制代码。
+- Runtime 先于 desktop。先把 wrapper 协议、attempt termination reason 和 abort 收口定住，再补 GUI 失败原因展示。
+- 这轮适合 external-delegate 执行：runtime、core、desktop 三块可以拆成边界清晰的实现单元并行落地，再在主线程做集成验证。
 
 ## Key Technical Decisions
 
-### 1. Use a mixed completion contract for agent executions
-- Decision: `process close` 继续是最终 settle 的核心信号，但 `TASKS_DISPATCHER_STAGE:complete` 必须进入 supervisor / coordinator 的状态机，作为“agent 明确声明已完成”的辅助收口信号。
-- Rationale: 当前 prompt 已要求输出 `complete` marker，但 runtime 没消费它，等于约定存在却无效。只相信 UI 看到的长日志显然不够；只相信进程关闭也会让“完成已声明但进程未及时退出”的情况长期卡住。
+### 1. Move final attempt truth to a wrapper-owned result protocol
+- Decision: runtime 与真实 agent 之间新增固定 wrapper 层。成功必须同时满足“当前 attempt 的正式结果文件有效”与“wrapper 以 `exit code = 0` 退出”。
+- Rationale: 这把未来自定义步骤/prompt 与运行时机器协议解耦。agent 可以换业务内容，但 runtime 只信 wrapper 提交的机器结果。
 - Alternatives considered:
-  - 完全改成看到 `complete` marker 就直接 `pending_validation`：风险太高，可能把还没真正结束的进程当成完成。
-  - 继续只依赖 `close`：无法解释当前“日志看起来已结束但状态不推进”的体验问题。
+  - 继续依赖 agent stdout marker 或自然语言总结：未来 prompt 可配置后会漂。
+  - 只看 `exit code`：壳层进程和真实 agent 的语义过粗，且 Windows 包装链会污染结果。
 
-### 2. Keep state truth in runtime, not renderer
-- Decision: task state、attempt status、attempt stage 仍由 runtime 层统一写入并广播；renderer 只做最终刷新兜底，不猜状态。
-- Rationale: 这符合现有 single-runtime-owner 模式，也避免 desktop 和 CLI 分裂出两套“完成”逻辑。
+### 2. Reuse the existing startup chain instead of adding a parallel executor
+- Decision: wrapper 沿现有启动链接入。`AgentRuntime.createLaunchSpec()` 负责产出 wrapper 启动规格；`NodeChildProcessRunner` 只负责执行；`ExecutionCoordinator` 在 wrapper 退出后结合结果文件与退出码裁决。
+- Rationale: 这是最小改动路径，也符合 shared runtime owner 原则。`WorkspaceRuntimeService` 继续做 wiring，不承担协议解释。
 
-### 3. Rebuild the desktop around a board-first shell
-- Decision: `TaskBoardPage` 改成“header + add-task button + six-column board”，移除常驻创建表单、常驻详情区、常驻日志区。
-- Rationale: 用户已经明确要求主界面只看到看板，不再承载过多细节。当前结构如果继续打补丁，最终会更乱。
+### 3. Treat `protocol_failure` as a first-class attempt termination reason
+- Decision: 在 [TaskAttempt.ts](/D:/Code/Projects/tasks-dispatcher/packages/core/src/domain/TaskAttempt.ts) 中新增 `protocol_failure` termination reason；task 仍落 `execution_failed`；事件层本轮继续使用既有 `execution_failed`，不新增独立 event type。
+- Rationale: 这样能最小代价把“协议失败”和“普通进程失败”分开存储与展示，同时避免为了一个细分失败原因扩散出整条新事件模型。
+- Alternatives considered:
+  - 只在日志中描述 `protocol_failure`：UI 和历史记录无法稳定消费。
+  - 同时新增 `execution_protocol_failed` event type：语义更细，但对当前交付价值不成比例。
 
-### 4. Layer task details by execution history
-- Decision: 任务详情分两层：
-  - 任务详情弹窗：基础信息 + 状态动作 + session 列表
-  - 会话详情弹窗：单个 session 的状态、阶段、历史 log、实时 log
-- Rationale: 这能把“无 attempt 的轻量任务”和“有多次执行历史的复杂任务”分开处理，避免一个弹窗承担所有信息。
+### 4. Keep abort strong-consistent and process-tree based
+- Decision: `abort` 成功的定义是“wrapper 确认真实 agent 进程树已停止”；只有此时 attempt 才能被标记为 `manually_aborted`。
+- Rationale: 当前 Windows 包装链下，只 kill 壳层进程并不可靠。若先写状态再事后清理，会再次制造 UI 与真实执行脱节。
+
+### 5. Keep the six-column board and surface failure reason as metadata
+- Decision: `protocol_failure` 和 `manually_aborted` 仍落 `Failed` 列；通过卡片摘要、session 列表摘要和 session 详情中的 termination reason 展示细分原因，不新增第七列。
+- Rationale: 六列看板是已定产品约束，失败细分应该以原因标签体现，而不是改变主信息架构。
+
+### 6. Preserve stacked modal navigation
+- Decision: session detail 继续叠加在 task detail 之上；关闭后回到原 session 列表位置与上下文。
+- Rationale: 这已经在 requirements 中定死，计划只需把 failure reason 展示和日志滚动接入这条既有路径。
 
 ## High-Level Technical Design
 
-This diagram is illustrative. It shows runtime truth flow and desktop information flow, not implementation code.
+This design is illustrative. It communicates the intended boundaries and result flow, not implementation code.
 
 ```mermaid
 flowchart LR
-    AGENT[Codex / Claude process] --> SUP[AgentProcessSupervisor]
-    SUP -->|stage markers + close| EXEC[ExecutionCoordinator]
-    EXEC --> TASK[(Task + TaskAttempt state)]
-    EXEC --> BUS[Workspace event bus]
-
-    BUS --> API[WorkspaceRuntimeClient]
-    API --> BOARD[Board shell]
-    BOARD --> TMODAL[Task detail modal]
-    TMODAL --> SESSIONS[Session list]
-    SESSIONS --> SMODAL[Session detail modal]
+    TASK[Task / Attempt] --> RT[AgentRuntime.createLaunchSpec]
+    RT --> WRAP[Repo-owned wrapper]
+    WRAP --> AGENT[Real agent process]
+    AGENT --> WRAP
+    WRAP --> RES[(attempt result file)]
+    WRAP --> EXIT[wrapper exit code]
+    EXIT --> EXEC[ExecutionCoordinator]
+    RES --> EXEC
+    EXEC --> DOMAIN[(Task + TaskAttempt)]
+    EXEC --> EVENTS[task.updated / task.log]
+    EVENTS --> UI[Desktop board + task/session modals]
 ```
 
-### Runtime Truth Model
-- final task state is written in runtime only
-- `complete` marker becomes a recognized execution signal, but does not bypass runtime ownership
-- renderer consumes runtime events and uses targeted refetch to converge on final state
+### Runtime Result Contract
+- Stage markers remain observational: they may continue to drive `plan / develop / self_check`.
+- Final outcome is no longer marker-driven.
+- `ExecutionCoordinator` should treat outcomes like this:
 
-### Desktop Information Model
-- Board shell shows grouped human-facing columns only
-- Task card shows only the minimal summary plus direct actions
-- Task modal shows task-level details and session list
-- Session modal shows one attempt/session deeply, with collapsible log area
+| Wrapper exit | Result file | Runtime outcome |
+| --- | --- | --- |
+| `0` | valid | success -> `pending_validation` |
+| `0` | missing / invalid | `protocol_failure` -> `execution_failed` |
+| non-zero | any | process failure -> `execution_failed` |
+| aborted by runtime | any | `manually_aborted` after process tree stop |
 
-## Implementation Units
+### Result Artifact Direction
+This path is directional guidance for planning, not implementation code.
 
-### [x] Unit 1: Harden execution settle signals and attempt synchronization
+```text
+.tasks-dispatcher/runtime/results/<task-id>/<attempt-id>.json
+```
 
-**Goal**
-- 让 runtime 在真实执行结束后稳定推进 task 与 current attempt，不再长期卡在 `executing / running / plan`。
+- Wrapper writes a temporary artifact, validates it, then atomically promotes it to the final result path.
+- Runtime reads only the final path after wrapper exit.
+- Logs remain in `.tasks-dispatcher/logs/<task-id>/<attempt-id>.log`.
+
+## Completed Baseline Units
+
+### [x] Unit A: Ship baseline runtime settle hardening
+
+**Outcome**
+- `TASKS_DISPATCHER_STAGE:complete` became a recognized signal
+- desktop gained refresh convergence instead of relying only on restart
+- missing log reads stopped crashing the runtime server
 
 **Primary files**
 - `packages/workspace-runtime/src/dispatching/AgentProcessSupervisor.ts`
 - `packages/workspace-runtime/src/dispatching/ExecutionCoordinator.ts`
-- `packages/workspace-runtime/src/agents/AgentPromptFactory.ts`
-- `packages/workspace-runtime/src/server/WorkspaceRuntimeService.ts`
-- `packages/workspace-runtime/src/server/TaskEventStream.ts`
+- `packages/workspace-runtime/src/server/WorkspaceServer.ts`
+- `packages/workspace-runtime/tests/dispatching/ExecutionCoordinator.test.ts`
+
+### [x] Unit B: Ship board-first desktop shell
+
+**Outcome**
+- six fixed kanban columns
+- Add Task modal
+- task detail modal
+- session detail modal with collapsible log area
+
+**Primary files**
+- `apps/desktop/src/renderer/pages/TaskBoardPage.tsx`
+- `apps/desktop/src/renderer/components/TaskBoardColumn.tsx`
+- `apps/desktop/src/renderer/components/TaskCard.tsx`
+- `apps/desktop/src/renderer/components/TaskDetailModal.tsx`
+- `apps/desktop/src/renderer/components/TaskSessionDetailModal.tsx`
+
+### [x] Unit C: Lock the desktop-first layout
+
+**Outcome**
+- minimum width `1200px`
+- horizontal scroll below minimum width
+- no mobile-adaptive collapse
+
+**Primary files**
+- `apps/desktop/src/renderer/pages/TaskBoardPage.tsx`
+- `docs/solutions/best-practices/desktop-app-no-mobile-adaptation-2026-03-30.md`
+
+## New Implementation Units
+
+### [ ] Unit 1: Introduce the wrapper execution result protocol
+
+**Goal**
+- 用 repo-owned wrapper 替换“直接启动真实 agent”的最终结果边界，让后续自定义步骤/prompt 也不会破坏 attempt 成败判定。
+
+**Primary files**
+- `packages/workspace-runtime/src/agents/AgentRuntime.ts`
+- `packages/workspace-runtime/src/agents/CodexCliRuntime.ts`
+- `packages/workspace-runtime/src/agents/ClaudeCodeRuntime.ts`
+- `packages/workspace-runtime/src/agents/NodeChildProcessRunner.ts`
+- `packages/workspace-runtime/src/bootstrap/WorkspacePaths.ts`
+- `packages/workspace-runtime/src/agents/wrapper/AgentAttemptWrapper.ts` (new)
+- `packages/workspace-runtime/src/persistence/AttemptResultFileStore.ts` (new)
 
 **Patterns to follow**
-- 复用 [ExecutionCoordinator.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/dispatching/ExecutionCoordinator.ts) 现有“runtime 真相源”边界，不把最终状态推进移到 renderer。
-- 保持 [Task.ts](/D:/Code/Projects/tasks-dispatcher/packages/core/src/domain/Task.ts) 和 [TaskAttempt.ts](/D:/Code/Projects/tasks-dispatcher/packages/core/src/domain/TaskAttempt.ts) 的领域约束为最终规则源。
+- 沿用现有 `createLaunchSpec -> child process runner` 主干，不另起 executor。
+- 路径管理沿用 [WorkspacePaths.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/bootstrap/WorkspacePaths.ts) 的集中式做法。
 
 **Approach**
-- 让 supervisor 识别 `TASKS_DISPATCHER_STAGE:complete`，并把它作为显式执行完成信号纳入内部事件模型。
-- 在 coordinator 中定义清晰的 settle 策略：
-  - stage markers 驱动 `plan / develop / self_check`
-  - `complete` marker 表示 agent 已声明完成
-  - `close` 仍是进程生命周期的最终确认点
-- 对“已声明完成但 close 延迟”给出明确收口策略，避免状态永久卡住。
-- 保持 Windows `codex` 启动路径与现有 `cmd.exe /d /s /c` 兼容。
+- 扩展 launch spec 所需元数据，使 runtime 能在创建 launch spec 时就绑定 `taskId`、`attemptId`、结果文件路径和真实 agent 目标。
+- 新增 repo-owned wrapper，负责：
+  - 启动真实 agent
+  - 转发 stdout/stderr 到原有日志链路
+  - 写临时结果文件并原子晋升为正式结果文件
+  - 对 abort / timeout / child exit 做统一收尾
+- `NodeChildProcessRunner` 保持“执行 spec”职责，不解析结果文件。
+
+**Test files**
+- `packages/workspace-runtime/tests/agents/AgentAttemptWrapper.test.ts` (new)
+- `packages/workspace-runtime/tests/agents/AgentProcessSupervisor.test.ts`
+- `packages/workspace-runtime/tests/bootstrap/WorkspacePaths.test.ts` (new)
+
+**Test scenarios**
+- wrapper 能启动 codex/claude 的真实 launch target，并把原始 stdout/stderr 继续透传
+- wrapper 写正式结果文件前会先完成临时文件与校验，不会留下半成品 final artifact
+- wrapper 异常退出时不会伪造成功结果文件
+- Windows 下 codex 包装链仍能正确传参，不重新引入 `cmd.exe / codex.cmd` 分裂问题
+
+**Verification**
+- launch spec、workspace paths、wrapper result artifact 都有独立测试锁住，执行协议不再依赖 prompt 文本约定
+
+### [ ] Unit 2: Refactor execution settle to read wrapper results
+
+**Goal**
+- 把 attempt 最终成败判定从“close + marker”升级为“wrapper exit + result artifact”，并让 `protocol_failure` 成为 first-class termination reason。
+
+**Primary files**
+- `packages/core/src/domain/TaskAttempt.ts`
+- `packages/core/src/domain/Task.ts`
+- `packages/core/src/domain/TaskEvent.ts`
+- `packages/core/src/contracts/TaskDtos.ts`
+- `packages/workspace-runtime/src/dispatching/ExecutionCoordinator.ts`
+- `packages/workspace-runtime/src/server/WorkspaceRuntimeService.ts`
+- `packages/workspace-runtime/src/persistence/SqliteTaskRepository.ts`
+- `packages/workspace-runtime/src/persistence/SqliteTaskEventStore.ts`
+
+**Patterns to follow**
+- 延续 [Task.ts](/D:/Code/Projects/tasks-dispatcher/packages/core/src/domain/Task.ts) 中“task state 与 attempt lifecycle 分离”的领域边界。
+- 继续让 `ExecutionCoordinator` 成为唯一最终 settle 点，而不是把结果解释散落到 service 或 renderer。
+
+**Approach**
+- 在 attempt termination reasons 中新增 `protocol_failure`。
+- 保持 event layer 的最小改动：
+  - `manually_aborted` 继续通过 `task_aborted` 体现动作
+  - `protocol_failure` 继续走 `execution_failed` event
+- 在 `ExecutionCoordinator` 中引入明确的 settle 矩阵：
+  - valid result + exit 0 => `markAwaitingValidation`
+  - invalid/missing result + exit 0 => `markExecutionFailed("protocol_failure")`
+  - non-zero exit => 既有失败原因
+- 清理 `stageUpdateQueue` 和 settle 之间的耦合，确保 stage 更新异常不能阻塞最终 settle。
+
+**Test files**
+- `packages/core/tests/domain/TaskAttempt.test.ts`
+- `packages/core/tests/application/TaskLifecycleServices.test.ts`
+- `packages/workspace-runtime/tests/dispatching/ExecutionCoordinator.test.ts`
+- `packages/workspace-runtime/tests/persistence/SqliteTaskRepository.test.ts`
+
+**Test scenarios**
+- valid result artifact + exit 0 => task `pending_validation`, attempt `completed`
+- exit 0 + missing result => task `execution_failed`, attempt `failed/protocol_failure`
+- exit 0 + corrupt result => task `execution_failed`, attempt `failed/protocol_failure`
+- non-zero exit + any artifact => task `execution_failed`, attempt 继续保留进程级失败原因
+- `protocol_failure` 和 `manually_aborted` 都能在 repository round-trip 后保持不变
+
+**Verification**
+- runtime 测试能稳定证明 success / process failure / protocol failure 三种终态被清晰区分
+
+### [ ] Unit 3: Make abort strongly consistent across wrapper and process tree
+
+**Goal**
+- 让 `abort` 真正终止底层执行，而不是只更新按钮状态或只杀壳层进程。
+
+**Primary files**
+- `packages/workspace-runtime/src/dispatching/AgentProcessSupervisor.ts`
+- `packages/workspace-runtime/src/dispatching/ExecutionCoordinator.ts`
+- `packages/workspace-runtime/src/agents/NodeChildProcessRunner.ts`
+- `packages/workspace-runtime/src/agents/wrapper/AgentAttemptWrapper.ts` (new)
+- `packages/workspace-runtime/src/server/WorkspaceRuntimeService.ts`
+
+**Patterns to follow**
+- 维持 runtime 主导的中止流程，不允许 desktop 或 CLI 直接越过 runtime 杀本地进程。
+- 参考 [windows-codex-process-launch-gotchas-2026-03-29.md](/D:/Code/Projects/tasks-dispatcher/docs/solutions/integration-issues/windows-codex-process-launch-gotchas-2026-03-29.md) 的 Windows 保守收口原则。
+
+**Approach**
+- wrapper 负责维护真实 child process 引用与进程树终止逻辑。
+- `ExecutionCoordinator.abortTask()` 不再把“已请求 abort”视为成功，而是等待 wrapper 返回“已停止”事实后再 settle。
+- `WorkspaceRuntimeService.abortTask()` 避免 broad catch 吞掉真实中止失败。
+- 为 Windows 定义明确的进程树终止路径，确保 codex/claude 的壳层与真实执行体一起退出。
 
 **Test files**
 - `packages/workspace-runtime/tests/dispatching/ExecutionCoordinator.test.ts`
-- `packages/workspace-runtime/tests/agents/AgentProcessSupervisor.test.ts`
-- `packages/workspace-runtime/tests/server/RuntimeLauncher.test.ts`
+- `packages/workspace-runtime/tests/agents/AgentAttemptWrapper.test.ts` (new)
+- `packages/workspace-runtime/tests/server/WorkspaceRuntimeService.test.ts` (new)
 
 **Test scenarios**
-- fake agent 输出完整 `plan -> develop -> self_check -> complete` 且正常退出时，task 进入 `pending_validation`，attempt 进入 `completed/self_check`
-- fake agent 缺少中间 stage marker，但输出 `complete` 并退出时，最终状态仍能正确 settle
-- fake agent 输出 `complete` 后延迟关闭时，task 不会永久卡在 `executing`
-- 非零退出、signal 终止、startup failure 仍正确落到 `execution_failed`
+- 运行中的 attempt 点击 abort 后，只有在 wrapper 确认 child process tree 已退出时才返回 `manually_aborted`
+- abort 失败时不会把 task 错标为 `manually_aborted`
+- Windows/cmd 包装链下，abort 不会只杀 `cmd.exe` 而留下真实 agent
+- abort 后 board / detail DTO 都会收敛到 `execution_failed + manually_aborted`
 
 **Verification**
-- workspace-runtime 针对 execution/supervisor 的测试能稳定证明最终状态推进不再依赖手工刷新
+- end-to-end runtime 测试能证明 abort 结果与真实进程停止事实一致
 
-### [x] Unit 2: Make desktop refresh converge on runtime truth after executions settle
+### [ ] Unit 4: Surface failure reasons through DTOs and desktop UI
 
 **Goal**
-- 即使流式事件有抖动，desktop 也能在执行结束后自动收敛到最终 task/attempt 状态。
+- 保持 six-column board 不变，同时让 `protocol_failure` / `manually_aborted` 在 `Failed` 列与详情层可见。
 
 **Primary files**
-- `apps/desktop/src/renderer/pages/TaskBoardPage.tsx`
-- `apps/desktop/src/preload/taskBoardApi.ts`
-- `apps/desktop/src/main/ipc/taskIpcHandlers.ts`
 - `packages/core/src/contracts/TaskDtos.ts`
-
-**Patterns to follow**
-- 延续 [TaskBoardPage.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/pages/TaskBoardPage.tsx) 现有 event + refetch 混合模式，但把它从“选中任务详情页思路”改成“board + modal”思路。
-
-**Approach**
-- 把执行中的最终刷新从“只刷新 selected task”提升为“board item summary + active modal detail”的统一收敛路径。
-- 明确区分：
-  - summary list refresh
-  - selected task detail refresh
-  - selected session log refresh
-- 确保读取空日志或还没生成的日志不会破坏 runtime 或把整个 desktop 打进 startup error state。
-- 如果 DTO 不足以支撑 session 列表排序和展示，在这里补 DTO 而不是让 renderer 拼接隐式语义。
-
-**Test files**
-- `apps/desktop/src/renderer/__tests__/TaskBoardPage.test.tsx`
-- `apps/desktop/src/main/__tests__/taskIpcHandlers.test.ts`
-- `apps/desktop/src/main/__tests__/desktopStartupSmoke.test.ts`
-
-**Test scenarios**
-- 当运行中的任务收到最终 settle 后，desktop summary 会更新到 `pending_validation` 或 `execution_failed`
-- attempt status/stage 变化后，打开中的详情视图会看到最终值
-- 读取缺失日志返回空串，不会把页面打成 startup error
-- desktop smoke 中 create -> queue -> wait 后，状态会从 `executing` 收敛到真实最终态或真实执行中态，而不是永久陈旧
-
-**Verification**
-- desktop smoke 能证明“执行完成后 UI 自动推进”，不是仅靠重新打开应用才恢复
-
-### [x] Unit 3: Replace the current desktop shell with a board-first layout
-
-**Goal**
-- 把主界面从“表单+列表+详情+日志”改成纯看板壳。
-
-**Primary files**
-- `apps/desktop/src/renderer/App.tsx`
-- `apps/desktop/src/renderer/pages/TaskBoardPage.tsx`
-- `apps/desktop/src/renderer/components/TaskList.tsx`
-- `apps/desktop/src/renderer/components/TaskBoardColumn.tsx`
+- `packages/core/src/contracts/WorkspaceRuntimeApi.ts`
+- `apps/desktop/src/renderer/board/boardModel.ts`
 - `apps/desktop/src/renderer/components/TaskCard.tsx`
-- `apps/desktop/src/renderer/components/TaskStatusActions.tsx`
-
-**Patterns to follow**
-- 保留 [TaskStatusActions.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskStatusActions.tsx) 的状态按钮规则，重用其行为边界。
-
-**Approach**
-- 把现有 `TaskList` 替换成按 `Draft / Ready / Running / Review / Failed / Archived` 分列的 board。
-- 列内排序固定用 `updatedAt` 倒序。
-- 卡片只展示：标题、三行描述摘要、状态、详情按钮、直接状态操作按钮。
-- 卡片主体不绑定详情打开，避免误触并为后续拖拽保留空间。
-- 主界面只保留 header、`Add Task` 按钮和 board，不再常驻详情/日志区。
-
-**Test files**
-- `apps/desktop/src/renderer/__tests__/TaskBoardPage.test.tsx`
-- `apps/desktop/src/renderer/__tests__/TaskStatusActions.test.tsx`
-- `apps/desktop/src/renderer/__tests__/TaskCard.test.tsx`
-
-**Test scenarios**
-- board 会把原始状态稳定映射到六个用户态列
-- 列内卡片按最近更新倒序排列
-- 卡片主体不会打开详情，只有 `Details` 按钮会
-- 卡片展示的状态操作按钮与 task state 一致
-
-**Verification**
-- 打开 desktop 后，主界面只出现 board shell 和 `Add Task`，不再出现常驻表单/详情/日志
-
-### [x] Unit 4: Move task creation into a modal workflow
-
-**Goal**
-- 保留现有任务创建字段，但把入口改成右上角按钮 + 弹窗。
-
-**Primary files**
-- `apps/desktop/src/renderer/components/TaskComposer.tsx`
-- `apps/desktop/src/renderer/components/CreateTaskModal.tsx`
-- `apps/desktop/src/renderer/pages/TaskBoardPage.tsx`
-
-**Patterns to follow**
-- 复用 [TaskComposer.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskComposer.tsx) 现有字段、默认 agent 和提交逻辑，不重复发明表单 contract。
-
-**Approach**
-- 把当前 `TaskComposer` 从页面块重包成 modal 内容。
-- header 右上角只保留 `Add Task` 按钮。
-- 创建成功后关闭 modal，并让新任务在对应列里浮到前面。
-
-**Test files**
-- `apps/desktop/src/renderer/__tests__/CreateTaskModal.test.tsx`
-- `apps/desktop/src/renderer/__tests__/TaskBoardPage.test.tsx`
-
-**Test scenarios**
-- 点击 `Add Task` 打开 modal
-- 创建成功后 modal 关闭，新任务出现在 `Draft` 列顶部
-- 创建失败时 modal 保持打开并展示错误
-
-**Verification**
-- desktop 主界面不再常驻创建表单
-
-### [x] Unit 5: Split task detail and session detail into two modal layers
-
-**Goal**
-- 让“轻量任务详情”和“深度会话详情”分层展示，避免一个弹窗承载所有历史与日志。
-
-**Primary files**
-- `apps/desktop/src/renderer/components/TaskDetailPane.tsx`
-- `apps/desktop/src/renderer/components/TaskLogStream.tsx`
 - `apps/desktop/src/renderer/components/TaskDetailModal.tsx`
 - `apps/desktop/src/renderer/components/TaskSessionList.tsx`
 - `apps/desktop/src/renderer/components/TaskSessionDetailModal.tsx`
 - `apps/desktop/src/renderer/pages/TaskBoardPage.tsx`
 
 **Patterns to follow**
-- 延续 [TaskDetailPane.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskDetailPane.tsx) 中基础信息与 `TaskStatusActions` 的展示语义，但改成 modal-first。
-- 复用 [TaskLogStream.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskLogStream.tsx) 的日志容器思路，但改成折叠式、可滚动的 session-level log viewer。
+- 继续维持 `Failed` 单列，不把细分失败原因升格为新列。
+- 让 failure reason 成为 metadata，而不是新的 UI 状态机。
 
 **Approach**
-- 任务尚无 attempt 时，任务详情 modal 只展示：标题、完整描述、状态、工作流、状态操作。
-- 任务已有 attempt 时，任务详情 modal 额外展示 session 列表，每条 session 带 `Details` 按钮。
-- 会话详情 modal 展示单个 session 的：
-  - 会话 ID
-  - status / stage / terminationReason
-  - 历史日志
-  - 实时日志
-- 日志默认折叠，展开后使用独立滚动区域；会话 modal 宽度比任务详情 modal 更宽。
+- 给 summary 或 board 所需数据补一个最小 failure hint，避免卡片层为了显示原因必须额外拉 detail。
+- session 列表至少能看出该 session 的 `terminationReason` 摘要。
+- session 详情继续作为 failure reason 最完整的展示层。
+- `TaskBoardPage` 保持 task detail -> session detail 的叠加 modal 返回路径，不因为失败原因展示破坏上下文恢复。
 
 **Test files**
+- `apps/desktop/src/renderer/__tests__/TaskCard.test.tsx`
 - `apps/desktop/src/renderer/__tests__/TaskDetailModal.test.tsx`
+- `apps/desktop/src/renderer/__tests__/TaskSessionList.test.tsx` (new)
 - `apps/desktop/src/renderer/__tests__/TaskSessionDetailModal.test.tsx`
-- `apps/desktop/src/renderer/__tests__/TaskLogStream.test.tsx`
+- `apps/desktop/src/renderer/__tests__/TaskBoardPage.test.tsx`
 
 **Test scenarios**
-- 无 attempt 的任务详情 modal 不展示 session 列表或日志区
-- 有 attempt 的任务详情 modal 展示 session 列表，每条 session 可进入二级详情 modal
-- 会话详情 modal 中日志默认折叠；展开后日志容器独立滚动
-- 多 attempt 时能清晰区分不同 session，而不是把日志混成一段
+- `execution_failed + protocol_failure` 显示在 `Failed` 列，并带明确原因标签
+- `execution_failed + manually_aborted` 显示在 `Failed` 列，并与普通失败可区分
+- task detail 中打开某个失败 session 后，session detail 关闭会回到原列表上下文
+- board 不会因为 failure reason 展示而打破 desktop-first 六列结构
 
 **Verification**
-- 一个任务存在多个 attempt 时，主界面仍保持干净，深度信息只在二级 modal 出现
+- desktop 组件测试能证明 failure reason 在 board / detail / session 三层都可见且不破坏现有信息架构
+
+### [ ] Unit 5: Rebuild regression coverage around the new protocol
+
+**Goal**
+- 让后续实现自定义步骤/prompt 前，attempt 级协议、abort 和 desktop failure visibility 都有稳定回归保护。
+
+**Primary files**
+- `packages/workspace-runtime/tests/dispatching/ExecutionCoordinator.test.ts`
+- `packages/workspace-runtime/tests/agents/AgentProcessSupervisor.test.ts`
+- `packages/workspace-runtime/tests/agents/AgentAttemptWrapper.test.ts` (new)
+- `packages/workspace-runtime/tests/server/WorkspaceRuntimeService.test.ts` (new)
+- `apps/desktop/src/main/__tests__/desktopStartupSmoke.test.ts`
+- `apps/desktop/src/renderer/__tests__/TaskBoardPage.test.tsx`
+
+**Patterns to follow**
+- 对 runtime 使用 characterization-style 覆盖，先锁当前 bug，再锁未来协议约束。
+- 对 desktop 继续使用组件测试 + 一条 smoke，而不是用重型端到端覆盖全部交互。
+
+**Approach**
+- 为 success / protocol_failure / manually_aborted 三条主线各补一组最短闭环测试。
+- desktop smoke 补一条“queue -> running -> abort / protocol failure -> failed reason visible”的链路。
+- 保持已有 board UI smoke，不把本轮 failure visibility 变成新的视觉回归大工程。
+
+**Test files**
+- 同上
+
+**Test scenarios**
+- queue 后 valid result 收敛到 `pending_validation`
+- queue 后 invalid result 收敛到 `execution_failed/protocol_failure`
+- queue 后 abort 收敛到 `execution_failed/manually_aborted`
+- 打开的 detail/session modal 会看到最终 termination reason
+
+**Verification**
+- implementer 能靠测试先验证 runtime truth，再验证 desktop convergence 和 failure visibility
 
 ## System-Wide Impact
-- runtime completion contract 会更明确，减少“日志看起来结束但状态没落地”的灰区。
-- desktop 页面状态会从“selected task + side pane”转成“board shell + modal stack”，这会影响 renderer 的状态管理方式。
-- DTO 可能需要增加更明确的会话展示信息，但不应破坏 CLI 与 runtime 的共享 contract。
+- runtime execution contract 从 marker-centric 变成 wrapper-centric，会影响 codex 和 claude 两条 launch path。
+- `protocol_failure` 会扩散到 core domain constants、DTO、runtime persistence round-trip、desktop failure presentation。
+- workspace state 目录会新增 attempt result artifact，需与现有 runtime/logs 目录并存且可清理。
+- desktop board 不改列模型，但 summary DTO 和 session 展示层会增加 failure reason 可见性。
 
 ## Risks and Dependencies
 
 ### Primary Risks
-- 如果把 `complete` marker 当成唯一 truth source，可能把未真正结束的 agent 误判为完成。
-- 如果 desktop summary 和 modal detail 各自维护状态，可能出现看板已更新但弹窗仍旧旧值的分裂。
-- 如果会话详情把所有日志一次性展开，modal 很容易重新变成信息垃圾场。
-- 如果按原始状态直接映射进 UI 组件，会让用户态列模型再次泄露实现细节。
+- wrapper 如果设计成第二套执行系统，会让 runtime wiring 和启动链分裂。
+- 结果文件如果没有原子提交语义，`exit 0` 时仍可能读到半写入结果并误判 `protocol_failure`。
+- abort 若继续只杀壳层，会让 `manually_aborted` 成为假象。
+- 把 failure reason 过度抬高到卡片主视觉，可能破坏现有 board 的信息密度。
 
 ### Mitigations
-- 用“complete marker + close + final refetch”混合策略，而不是单一信号。
-- Board summary 和 modal detail 都从 runtime DTO 拉取，不在 renderer 里发明影子状态机。
-- 会话详情日志默认折叠且独立滚动，避免 modal 尺寸被日志撑爆。
-- 把用户态列映射收口在一个明确的 board mapping helper 中，并用测试锁住。
+- 把 wrapper 接入点钉死在 `AgentRuntime.createLaunchSpec()`，而不是另建 executor。
+- 用 temp -> validate -> atomic promote 的结果文件策略；runtime 只读 final path。
+- 把 abort 成功定义为进程树已停止事实，而不是“已发送 kill 请求”。
+- 让 card 只显示最小 failure hint，把完整上下文留给 task/session detail。
 
 ### Dependencies
-- 现有 `Task / TaskAttempt / TaskStateMachine` 领域模型继续作为状态规则源
-- `TaskStatusActions` 可复用为卡片与 modal 的统一状态操作入口
-- 现有 desktop smoke 基础可继续扩展，用于验证 create -> queue -> settle 的完整链路
+- `AgentRuntime` 启动链可被扩展为 wrapper spec
+- `ExecutionCoordinator` 继续承担最终 settle 权限
+- `TaskAttemptTerminationReason` 与 DTO 可以扩充而不破坏 task/attempt 分层
+- 既有 board/detail/session modal 组件可以承接 failure reason 展示，而无需重写信息架构
 
 ## Open Questions
 
 ### Resolved During Planning
-- 列模型采用用户视角分组，而不是原始状态直出
-- 卡片主体不打开详情，`Details` 按钮才打开
-- 对已有 attempt 的任务，先 session 列表，再二级会话详情 modal
-- 日志默认折叠且独立滚动
-- 同列卡片按最近更新优先排序
+- wrapper 沿现有 `AgentRuntime -> runner -> coordinator` 链接入，而不是另起执行架构
+- 成功判定采用 `结果文件有效 + wrapper exit code = 0`
+- `protocol_failure` 成为正式 attempt termination reason
+- `protocol_failure` 本轮继续映射为 `execution_failed` event，而不是新增 event type
+- `protocol_failure` / `manually_aborted` 继续落 `Failed` 列，通过原因标签区分
+- session detail 继续叠加在 task detail 之上，关闭后回到原上下文
 
 ### Deferred to Implementation
-- [Affects Unit 1] Codex/Claude 的真实 `complete` marker 输出是否稳定到足以作为“声明完成”信号，需要在实现时用本机真实 CLI 再校验一次，但不改变 mixed completion contract 结论。
-- [Affects Unit 5] 二级 session modal 更适合用原生 dialog 还是受控 modal state，需要实现时结合现有 daisyUI 行为和可测试性定案。
+- [Affects Unit 1] wrapper 正式结果文件的精确 envelope 字段和校验规则
+- [Affects Unit 1, Unit 3] Windows 下 codex/claude 进程树终止的最终实现方式
+- [Affects Unit 4] summary DTO 的 failure hint 采用显式字段还是重用当前 attempt 摘要
+- [Affects Unit 4] session detail 叠加层最终使用现有 modal 组件还是受控 overlay state
 
 ## Sources and References
-- Origin requirements: [docs/brainstorms/2026-03-29-runtime-state-sync-and-kanban-desktop-requirements.md](D:\Code\Projects\tasks-dispatcher\docs\brainstorms\2026-03-29-runtime-state-sync-and-kanban-desktop-requirements.md)
-- Existing MVP plan: [2026-03-29-001-feat-agent-task-board-mvp-plan.md](D:\Code\Projects\tasks-dispatcher\docs\plans\2026-03-29-001-feat-agent-task-board-mvp-plan.md)
-- Existing desktop startup hardening plan: [2026-03-29-002-fix-desktop-startup-hardening-plan.md](D:\Code\Projects\tasks-dispatcher\docs\plans\2026-03-29-002-fix-desktop-startup-hardening-plan.md)
-- Runtime owner learning: [single-workspace-runtime-owner-2026-03-29.md](D:\Code\Projects\tasks-dispatcher\docs\solutions\best-practices\single-workspace-runtime-owner-2026-03-29.md)
-- Windows Codex launch learning: [windows-codex-process-launch-gotchas-2026-03-29.md](D:\Code\Projects\tasks-dispatcher\docs\solutions\integration-issues\windows-codex-process-launch-gotchas-2026-03-29.md)
+- Origin requirements: [2026-03-29-runtime-state-sync-and-kanban-desktop-requirements.md](/D:/Code/Projects/tasks-dispatcher/docs/brainstorms/2026-03-29-runtime-state-sync-and-kanban-desktop-requirements.md)
+- Existing baseline plan: [2026-03-29-001-feat-agent-task-board-mvp-plan.md](/D:/Code/Projects/tasks-dispatcher/docs/plans/2026-03-29-001-feat-agent-task-board-mvp-plan.md)
+- Runtime owner learning: [single-workspace-runtime-owner-2026-03-29.md](/D:/Code/Projects/tasks-dispatcher/docs/solutions/best-practices/single-workspace-runtime-owner-2026-03-29.md)
+- Task/attempt boundary learning: [task-vs-task-attempt-boundary-2026-03-29.md](/D:/Code/Projects/tasks-dispatcher/docs/solutions/best-practices/task-vs-task-attempt-boundary-2026-03-29.md)
+- Windows launch learning: [windows-codex-process-launch-gotchas-2026-03-29.md](/D:/Code/Projects/tasks-dispatcher/docs/solutions/integration-issues/windows-codex-process-launch-gotchas-2026-03-29.md)
+- Runtime launch spec boundary: [AgentRuntime.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/agents/AgentRuntime.ts)
 - Runtime settle path: [ExecutionCoordinator.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/dispatching/ExecutionCoordinator.ts)
-- Stage parsing path: [AgentProcessSupervisor.ts](/D:/Code/Projects/tasks-dispatcher/packages/workspace-runtime/src/dispatching/AgentProcessSupervisor.ts)
-- Desktop board shell: [TaskBoardPage.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/pages/TaskBoardPage.tsx)
-- Current list component: [TaskList.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskList.tsx)
-- Current detail component: [TaskDetailPane.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskDetailPane.tsx)
+- Attempt domain model: [TaskAttempt.ts](/D:/Code/Projects/tasks-dispatcher/packages/core/src/domain/TaskAttempt.ts)
+- Desktop session detail UI: [TaskSessionDetailModal.tsx](/D:/Code/Projects/tasks-dispatcher/apps/desktop/src/renderer/components/TaskSessionDetailModal.tsx)
 
 ## Recommended Execution Order
 1. Unit 1
@@ -363,7 +461,6 @@ flowchart LR
 5. Unit 5
 
 ## Implementation Readiness Check
-- 计划把“先修运行正确性，再重做 GUI”明确拆成两段，没有混成一个大杂烩任务。
-- 所有关键单元都给出了明确文件路径、测试路径和验收场景。
-- runtime 真相仍收口在 shared runtime owner，没有把 desktop 变成特例。
-- GUI 方案已经把用户态列、卡片交互、弹窗层次和日志展示方式定清，planning 不需要再发明产品行为。
+- planning 已把 “wrapper 放哪一层、谁判结果、`protocol_failure` 落哪层语义、abort 何时算成功” 全部定清，`ce:work` 不需要再发明协议边界。
+- 文件路径、测试路径和 failure scenarios 已经具体到可以直接拆工。
+- 既有 six-column desktop shell 被视为已完成基线，后续实现不会把这轮 bugfix 又拖成一次 UI 大重写。

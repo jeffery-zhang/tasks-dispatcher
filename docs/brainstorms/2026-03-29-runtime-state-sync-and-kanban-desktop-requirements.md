@@ -22,6 +22,13 @@ topic: runtime-state-sync-and-kanban-desktop
 - R3. 如果 agent 输出阶段标记，系统必须更新 attempt stage；如果 agent 未按约定输出完整阶段标记，系统仍必须在进程结束时正确 settle 任务状态。
 - R4. renderer 必须能在执行结束后看到并展示最终状态，即使实时事件链路短暂中断，也不能永久卡在旧状态。
 - R5. 读取尚未生成的 log、空 log 或历史 log 时，系统不能因此把 runtime 进程打死或让后续 fetch 全部断开。
+- R5a. runtime 与真实 agent 之间必须存在固定 wrapper 执行边界；后续允许自定义任务步骤和每步 prompt，但不允许这些自定义内容改变 runtime 机器协议。
+- R5b. `attempt` 的最终成功、失败或中止必须由 runtime 依据 wrapper 协议判定，不能依赖 agent 的自然语言输出自行猜测。
+- R5c. `attempt` 只有在“当前 attempt 的正式结果文件存在且可解析”并且“wrapper 进程以 `exit code = 0` 退出”同时满足时，才可被判定为成功。
+- R5d. 当 wrapper `exit code = 0` 但结果文件缺失、损坏或无法解析时，系统必须将该次执行记为 `protocol_failure`，并把任务推进到 `execution_failed`，不能根据日志或阶段信息猜成功。
+- R5e. `abort` 必须采用强一致语义：只有 wrapper 确认真实 agent 进程树已停止后，系统才可将当前 attempt 标记为 `manually_aborted`。
+- R5f. wrapper 必须通过现有 agent 启动链接入系统：`AgentRuntime` 负责产出 wrapper 启动规格，runtime 在 wrapper 退出后读取当前 attempt 的正式结果文件，并据此完成最终状态判定。
+- R5g. `protocol_failure` 必须作为明确的 attempt 终止原因进入持久化与事件模型；它与 `manually_aborted` 一样属于 `execution_failed` 的细分失败原因，而不是仅存在于日志说明里。
 
 **Phase 2: Kanban Desktop**
 - R6. desktop 主界面改为任务看板，按用户视角分组列展示任务，而不是按内部原始状态一列一个。
@@ -32,7 +39,7 @@ topic: runtime-state-sync-and-kanban-desktop
 - R10a. 任务卡片允许直接展示当前状态可执行的状态切换按钮，人类无需先进入详情弹窗才能执行常见状态操作。
 - R10b. 任务卡片本体不承担打开详情的点击行为；只有明确点击 `Details` 按钮时才打开任务详情弹窗，以降低误触。
 - R11. 当任务处于 agent 尚未接手过的状态时，详情弹窗只展示基础信息：标题、完整描述、状态、工作流、该状态允许的操作按钮。
-- R12. 当任务已经有过 attempt 时，详情弹窗必须展示执行上下文：会话 ID、流程状态、历史 log、实时 log。
+- R12. 当任务已经有过 attempt 时，任务详情弹窗必须展示执行上下文入口：历史 session 列表、每个 session 的会话 ID、状态摘要，以及进入单个 session 详情的明确入口。
 - R13. 如果任务有多个 attempt，详情弹窗必须允许用户理解这些 attempt 是同一任务的不同执行会话，而不是一条扁平日志。
 - R14. 看板列固定为 `Draft / Ready / Running / Review / Failed / Archived` 六列，内部原始状态继续保留为系统真实状态源。
 - R15. 内部状态与看板列的映射必须稳定且可解释：
@@ -42,52 +49,74 @@ topic: runtime-state-sync-and-kanban-desktop
   - `Review` 映射 `pending_validation`
   - `Failed` 映射 `execution_failed`
   - `Archived` 映射 `archived`
+- R15a. `protocol_failure` 与 `manually_aborted` 属于 `execution_failed` 的细分终止结果；它们必须继续落在 `Failed` 列，但卡片与详情弹窗要能明确展示失败原因，不能与普通失败混成一个不可区分的状态。
 - R16. 当任务已有一个或多个 session / attempt 时，任务详情弹窗首先展示历史 session 列表，每个 session 项至少展示会话 ID 与 `Details` 按钮。
 - R17. 点击某个 session 的 `Details` 按钮后，系统打开二级会话详情弹窗，用于展示该 session 的状态、流程阶段、历史 log 与实时 log。
 - R18. 会话详情弹窗中的日志区域默认折叠，用户手动展开后才显示日志内容。
 - R19. 会话详情弹窗中的日志容器必须独立可滚动，不能把整页或整弹窗的滚动与长日志绑定在一起。
 - R20. 会话详情弹窗宽度应明显大于基础任务详情弹窗，以容纳状态信息与日志查看，但仍保持单任务上下文，不演变为整页布局。
+- R20a. 会话详情弹窗必须叠加在任务详情弹窗之上；关闭会话详情后，用户返回原任务详情弹窗中的 session 列表位置与上下文，而不是直接回到看板或丢失当前任务上下文。
 - R21. 同一看板列内的任务卡片按最近更新时间倒序排列，最近有状态变化或执行活动的任务排在更上方。
 
 ## Success Criteria
 - 人类在 desktop 中观察到的任务状态，会在 agent 执行结束后自动推进到正确最终态。
 - `current attempt` 信息不再长期停留在 `running / plan` 的陈旧值。
+- 自定义步骤与自定义 prompt 不会破坏执行结果判定协议；runtime 仍能稳定区分成功、失败、协议失败与人工中止。
+- 当 wrapper `exit code = 0` 但结果文件异常时，任务会明确落入失败态，而不是继续卡在 `executing` 或被误判成功。
+- 当用户点击 `abort` 时，系统只会在真实进程树停止后才显示 `manually_aborted` 结果。
+- wrapper 能在不绕开现有 runtime 启动链的前提下接入系统，开发阶段不需要临时发明第二套启动路径。
+- `protocol_failure` 会像其他终止原因一样进入 attempt 历史、事件流和 GUI 展示，而不是成为只存在于实现细节中的隐形错误。
 - 主界面进入后首先看到的是状态分列的任务看板，而不是表单加侧边详情的混合布局。
 - 任务创建通过弹窗完成，详情查看也通过弹窗完成。
 - 人类可以直接在任务卡片上执行状态切换，不必每次先打开详情弹窗。
 - 人类不会因为误点卡片主体而意外进入详情弹窗。
 - 对于没有 attempt 的任务，详情弹窗保持轻量；对于有 attempt 的任务，详情弹窗能提供完整执行上下文。
 - 看板列数量保持稳定，不因内部状态细节暴露而让主界面变成实现细节面板。
+- `protocol_failure` 与 `manually_aborted` 这类失败会稳定显示在 `Failed` 列，并带有可见的原因区分。
 - 同一列里最近有变化的任务会优先浮到上方，不需要人工在长列中反复寻找最新任务。
 - 当任务存在多个 session 时，用户先看到 session 列表，再按需进入单个 session 的详情，而不是在一个弹窗里一次性承载所有长日志。
 - 长日志不会撑爆详情弹窗，日志查看区能单独滚动且默认收起。
+- 打开某个 session 的详情后，关闭时会回到原任务详情弹窗，而不是把用户直接踢回看板。
 
 ## Scope Boundaries
 - 先处理运行正确性，再进入 GUI 重构；本轮不接受反过来的顺序。
 - 不改变任务领域状态机本身的业务定义，除非证明当前 bug 来自状态机规则错误。
+- 这一轮只定义 `attempt` 级别的最终结果协议，不扩展到未来每个自定义步骤的单独结果协议。
 - 不在这一轮引入新的 workflow 系统、过滤系统、多人协作能力或复杂拖拽交互。
 - 不把“主界面只显示看板”扩展成完整设计系统重写。
 - 这一版不做拖拽排序、拖拽换列或其他拖拽交互。
 
 ## Key Decisions
 - 先修 bug 再改 GUI：状态正确性是新界面的前置条件。
+- 未来允许自定义任务步骤和每步 prompt，但执行机器协议固定在 wrapper 层，不能被业务 prompt 自由改写。
+- runtime、wrapper、真实 agent 三层职责分离：runtime 负责最终裁决，wrapper 负责执行协议与进程控制，agent 只负责执行任务内容。
+- 成功判定采用双条件：正式结果文件有效且 wrapper `exit code = 0`；缺一不可。
+- `exit code = 0` 但结果文件异常时按 `protocol_failure` 处理，不根据日志或 stage 补猜。
+- `abort` 采用强一致：只有真实 agent 进程树确认停止，才落 `manually_aborted`。
+- wrapper 沿用现有 agent 启动链接入：`AgentRuntime` 负责包装真实 agent 的启动规格，`ExecutionCoordinator` 负责在 wrapper 退出后结合结果文件与退出码裁决最终结果。
+- `protocol_failure` 是正式领域结果，不是临时调试标签；它必须进入 attempt 终止原因、事件流与前端可见信息。
 - 主界面只保留看板，创建和详情都移到弹窗：这样主界面的认知负担最低，也符合你明确给出的使用方式。
 - 状态操作允许直接放在卡片上：这样主界面仍然是看板，但不牺牲常见操作效率。
 - 卡片主体不绑定详情打开：为后续可能出现的拖拽交互保留空间，也能降低这一版的误触成本。
 - 详情弹窗按“是否已有 attempt”分层展示，而不是所有任务都强行展示日志和会话信息。
 - 看板列采用用户视角分组，而不是原始状态直出：内部状态仍是系统真相，但主界面优先服务人类理解与操作。
 - 对已有 attempt 的任务，先展示 session 列表，再通过二级会话详情弹窗承载长日志与流程细节，避免一个弹窗同时塞满所有执行历史。
+- 二级会话详情弹窗采用叠加式返回路径：session detail 盖在 task detail 上，关闭后回到原 session 列表上下文。
 - 列内排序采用最近更新优先，而不是传统 FIFO 展示：看板首先服务观察与人工干预，不是纯队列监控面板。
 
 ## Dependencies / Assumptions
-- 当前任务状态推进问题更可能来自 runtime / agent stdout contract / desktop refresh contract 的组合缺陷，而不是纯 renderer 样式问题。
+- 当前任务状态推进问题更可能来自 runtime / execution wrapper contract / desktop refresh contract 的组合缺陷，而不是纯 renderer 样式问题。
+- wrapper 可以稳定代表 runtime 与真实 agent 之间的固定执行边界，并承担结果文件提交与进程树控制职责。
+- 现有 runtime 主干仍然可复用：这次应优先扩展 `AgentRuntime`、child process 启动链、`ExecutionCoordinator`、attempt termination reason 与事件模型，而不是另起一条平行执行架构。
 - 当前 UI 可复用一部分任务动作和日志组件，但页面编排需要明显重做。
 
 ## Outstanding Questions
 
 ### Deferred to Planning
-- [Affects R3,R4][Technical] 任务最终状态推进应优先依赖进程关闭、stdout 阶段标记、还是两者混合的状态同步策略。
-- [Affects R17,R18,R19][Technical] 二级会话详情弹窗使用原生 modal、受控 dialog 还是抽屉式覆盖层来承载大宽度与独立日志滚动。
+- [Affects R5c,R5d][Technical] wrapper 的正式结果文件应采用什么原子写入与校验策略，才能避免半写入、旧文件复用或脏结果误判。
+- [Affects R5e][Technical] Windows 下 wrapper 应如何可靠终止真实 agent 进程树，并向 runtime 回报“已停止”确认。
+- [Affects R5f,R5g][Technical] 现有 attempt 终止原因、任务事件与 SQLite schema 需要怎样扩充，才能完整承载 `protocol_failure` 与 wrapper 结果判定。
+- [Affects R17,R18,R19,R20a][Technical] 二级会话详情弹窗使用原生 modal、受控 dialog 还是抽屉式覆盖层来承载大宽度、独立日志滚动与叠加式返回路径。
 
 ## Next Steps
 → /prompts:ce-plan for structured implementation planning
