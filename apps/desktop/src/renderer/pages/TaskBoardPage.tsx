@@ -260,8 +260,8 @@ export function TaskBoardPage() {
   }));
 
   return (
-    <main className="min-h-screen bg-base-200 p-6">
-      <div className="mx-auto flex max-w-[90rem] flex-col gap-6">
+    <main className="min-h-screen min-w-[1200px] overflow-x-auto bg-base-200 px-3 py-4">
+      <div className="flex w-full flex-col gap-4">
         <header className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.24em] text-primary">
@@ -279,7 +279,7 @@ export function TaskBoardPage() {
           </button>
         </header>
 
-        <section className="grid gap-4 xl:grid-cols-6">
+        <section className="grid min-w-[1200px] grid-cols-6 gap-3">
           {groupedTasks.map((column) => (
             <TaskBoardColumn
               key={column.key}
