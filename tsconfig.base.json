@@ -9,24 +9,22 @@
     "noImplicitOverride": true,
     "useDefineForClassFields": true,
     "verbatimModuleSyntax": true,
-    "ignoreDeprecations": "6.0",
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "baseUrl": ".",
     "paths": {
       "@tasks-dispatcher/core": [
-        "packages/core/src/index.ts"
+        "./packages/core/src/index.ts"
       ],
       "@tasks-dispatcher/core/*": [
-        "packages/core/src/*"
+        "./packages/core/src/*"
       ],
       "@tasks-dispatcher/workspace-runtime": [
-        "packages/workspace-runtime/src/index.ts"
+        "./packages/workspace-runtime/src/index.ts"
       ],
       "@tasks-dispatcher/workspace-runtime/*": [
-        "packages/workspace-runtime/src/*"
+        "./packages/workspace-runtime/src/*"
       ]
     }
   }
