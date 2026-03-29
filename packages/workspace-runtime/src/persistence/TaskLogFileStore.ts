@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { WorkspacePaths } from "../bootstrap/WorkspacePaths.js";
 
@@ -17,6 +17,12 @@ export class TaskLogFileStore {
   }
 
   read(taskId: string, attemptId: string): string {
-    return readFileSync(this.#paths.getAttemptLogPath(taskId, attemptId), "utf8");
+    const logPath = this.#paths.getAttemptLogPath(taskId, attemptId);
+
+    if (!existsSync(logPath)) {
+      return "";
+    }
+
+    return readFileSync(logPath, "utf8");
   }
 }

@@ -124,6 +124,12 @@ export class ExecutionCoordinator {
         );
       });
 
+      supervisor.onCompletionDeclared(() => {
+        stageUpdateQueue = stageUpdateQueue.then(() =>
+          this.#advanceStage(taskId, "self_check")
+        );
+      });
+
       supervisor.onExit((event) => {
         void stageUpdateQueue
           .then(() => this.#settleTask(taskId, event.reason))

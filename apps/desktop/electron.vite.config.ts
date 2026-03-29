@@ -42,7 +42,11 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          preload: resolve(__dirname, "src/preload/taskBoardApi.ts")
+          taskBoardApi: resolve(__dirname, "src/preload/taskBoardApi.ts")
+        },
+        output: {
+          entryFileNames: "[name].js",
+          format: "cjs"
         }
       }
     }

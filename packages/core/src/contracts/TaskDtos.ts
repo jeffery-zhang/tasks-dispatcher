@@ -7,6 +7,7 @@ import type { Task } from "../domain/Task.js";
 export interface TaskSummaryDto {
   id: string;
   title: string;
+  description: string;
   state: TaskState;
   agent: AgentKind;
   updatedAt: string;
@@ -38,6 +39,7 @@ export function toTaskSummaryDto(task: Task): TaskSummaryDto {
   return {
     id: snapshot.id,
     title: snapshot.title,
+    description: snapshot.description,
     state: snapshot.state,
     agent: snapshot.agent,
     updatedAt: snapshot.updatedAt,

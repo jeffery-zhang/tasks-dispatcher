@@ -29,4 +29,11 @@ describe("TaskLogFileStore", () => {
 
     expect(logStore.read("task-1", "attempt-1")).toBe("line one\nline two\n");
   });
+
+  it("returns an empty string when the attempt log has not been created yet", () => {
+    const workspaceRoot = createWorkspaceRoot();
+    const logStore = new TaskLogFileStore(new WorkspacePaths(workspaceRoot));
+
+    expect(logStore.read("task-missing", "attempt-missing")).toBe("");
+  });
 });

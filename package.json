@@ -10,13 +10,19 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm exec vitest run --config vitest.workspace.ts packages/core/tests && pnpm exec vitest run --config vitest.workspace.ts packages/workspace-runtime/tests && pnpm exec vitest run --config vitest.workspace.ts apps/cli/tests && pnpm exec vitest run --config vitest.workspace.ts apps/desktop/src/main/__tests__",
+    "test:core": "pnpm exec vitest run --config vitest.workspace.ts packages/core/tests",
+    "test:runtime": "pnpm exec vitest run --config vitest.workspace.ts packages/workspace-runtime/tests",
+    "test:cli": "pnpm exec vitest run --config vitest.workspace.ts apps/cli/tests",
+    "test:desktop": "pnpm exec vitest run --config vitest.workspace.ts apps/desktop/src/renderer/__tests__ apps/desktop/src/main/__tests__/ipc-surface-contract.test.ts apps/desktop/src/main/__tests__/desktopBootstrapArtifacts.test.ts apps/desktop/src/main/__tests__/taskIpcHandlers.test.ts",
+    "test:desktop:smoke": "pnpm exec vitest run --config vitest.workspace.ts apps/desktop/src/main/__tests__/desktopStartupSmoke.test.ts",
+    "test": "pnpm test:core && pnpm test:runtime && pnpm test:cli && pnpm test:desktop",
     "test:watch": "vitest --config vitest.workspace.ts",
     "dev:cli": "pnpm --filter @tasks-dispatcher/cli dev",
     "dev:desktop": "pnpm --filter @tasks-dispatcher/desktop dev"
   },
   "devDependencies": {
     "@types/node": "25.5.0",
+    "playwright": "^1.58.2",
     "tsx": "4.21.0",
     "typescript": "6.0.2",
     "vitest": "4.1.2"

@@ -23,7 +23,7 @@ describe("TaskStatusActions", () => {
   it("shows queue and reopen actions for failed tasks", () => {
     const markup = renderToStaticMarkup(
       <TaskStatusActions
-        task={createTask("execution_failed")}
+        state={createTask("execution_failed").state}
         onQueue={vi.fn()}
         onReopen={vi.fn()}
         onArchive={vi.fn()}
@@ -39,7 +39,7 @@ describe("TaskStatusActions", () => {
   it("shows only archive and reopen for validation tasks", () => {
     const markup = renderToStaticMarkup(
       <TaskStatusActions
-        task={createTask("pending_validation")}
+        state={createTask("pending_validation").state}
         onQueue={vi.fn()}
         onReopen={vi.fn()}
         onArchive={vi.fn()}

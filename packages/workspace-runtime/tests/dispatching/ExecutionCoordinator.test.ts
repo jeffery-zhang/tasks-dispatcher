@@ -185,4 +185,111 @@ describe("ExecutionCoordinator", () => {
       await wait(50);
     }
   });
+
+  it("settles to pending_validation even when the agent only emits plan and complete markers", async () => {
+    const workspaceRoot = createWorkspaceRoot();
+    const storage = WorkspaceStorage.open(workspaceRoot);
+    const repository = new SqliteTaskRepository(storage.database);
+    const taskEventStore = new SqliteTaskEventStore(storage.database);
+    const eventBus = new LocalEventBus();
+    const clock = new FixedClock();
+    const idGenerator = new IncrementingIdGenerator();
+    const partialMarkerScriptPath = join(workspaceRoot, "partial-marker-script.mjs");
+
+    writeFileSync(
+      partialMarkerScriptPath,
+      [
+        "console.log('TASKS_DISPATCHER_STAGE:plan');",
+        "console.log('planning only');",
+        "console.log('TASKS_DISPATCHER_STAGE:complete');"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const agentRuntimeRegistry = new LocalAgentRuntimeRegistry([
+      {
+        kind: "codex-cli",
+        createLaunchSpec() {
+          return {
+            command: process.execPath,
+            args: [partialMarkerScriptPath]
+          };
+        }
+      },
+      {
+        kind: "claude-code",
+        createLaunchSpec() {
+          return {
+            command: process.execPath,
+            args: [partialMarkerScriptPath]
+          };
+        }
+      }
+    ]);
+    const concurrencyGate = new ConcurrencyGate(2);
+    let scheduler: TaskScheduler;
+    const executionCoordinator = new ExecutionCoordinator({
+      workspaceRoot,
+      taskRepository: repository,
+      taskEventStore,
+      agentRuntimeRegistry,
+      childProcessRunner: new NodeChildProcessRunner(),
+      taskLogFileStore: new TaskLogFileStore(storage.paths),
+      eventBus,
+      clock,
+      idGenerator,
+      concurrencyGate,
+      onSettled: async () => scheduler.kick()
+    });
+    scheduler = new TaskScheduler({
+      taskRepository: repository,
+      concurrencyGate,
+      executionCoordinator
+    });
+
+    const createTaskService = new CreateTaskService({
+      taskRepository: repository,
+      taskEventStore,
+      agentRuntimeRegistry,
+      clock,
+      idGenerator
+    });
+    const queueTaskService = new QueueTaskService({
+      taskRepository: repository,
+      taskEventStore,
+      clock,
+      idGenerator
+    });
+
+    try {
+      const createdTask = await createTaskService.execute({
+        title: "Run partial marker task",
+        description: "Exercise completion marker fallback",
+        agent: "codex-cli"
+      });
+
+      await queueTaskService.execute(createdTask.id);
+      await scheduler.kick();
+
+      const completedTask = await waitForTaskState(
+        repository,
+        createdTask.id,
+        "pending_validation"
+      );
+
+      expect(completedTask.toSnapshot().attempts.at(-1)).toMatchObject({
+        status: "completed",
+        stage: "self_check"
+      });
+      expect(
+        new TaskLogFileStore(storage.paths).read(
+          createdTask.id,
+          completedTask.currentAttemptId!
+        )
+      ).toContain("planning only");
+    } finally {
+      storage.close();
+      await wait(50);
+    }
+  });
 });

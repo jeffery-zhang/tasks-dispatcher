@@ -33,4 +33,34 @@ describe("AgentProcessSupervisor", () => {
     expect(await completion).toBe("completed");
     expect(stages).toEqual(["plan", "develop", "self_check"]);
   });
+
+  it("emits a completion declaration when the agent prints the complete marker", async () => {
+    const childProcess = spawn(
+      process.execPath,
+      [
+        "-e",
+        [
+          "console.log('TASKS_DISPATCHER_STAGE:plan');",
+          "console.log('TASKS_DISPATCHER_STAGE:complete');"
+        ].join("")
+      ],
+      { stdio: "pipe" }
+    );
+    const supervisor = new AgentProcessSupervisor(childProcess);
+    const completionDeclarations: boolean[] = [];
+
+    const completion = new Promise<string>((resolve) => {
+      supervisor.onCompletionDeclared(() => {
+        completionDeclarations.push(true);
+      });
+      supervisor.onExit((event) => {
+        resolve(event.reason);
+      });
+    });
+
+    supervisor.start();
+
+    expect(await completion).toBe("completed");
+    expect(completionDeclarations).toEqual([true]);
+  });
 });

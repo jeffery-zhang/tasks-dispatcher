@@ -51,7 +51,7 @@ export function TaskDetailPane({
         </div>
 
         <TaskStatusActions
-          task={task}
+          state={task.state}
           onQueue={onQueue}
           onReopen={onReopen}
           onArchive={onArchive}
@@ -81,4 +81,3 @@ export function TaskDetailPane({
     </section>
   );
 }
-

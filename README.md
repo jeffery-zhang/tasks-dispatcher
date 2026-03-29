@@ -49,6 +49,27 @@ pnpm dev:desktop
 - 这个目录下会生成 `.tasks-dispatcher/`
 - 任务、事件、日志都只属于这个目录
 
+如果你要做可重复的本地烟测或排障，可以直接指定工作目录：
+
+```bash
+TASKS_DISPATCHER_WORKSPACE=D:\Code\test\testdir pnpm dev:desktop
+```
+
+Windows PowerShell:
+
+```powershell
+$env:TASKS_DISPATCHER_WORKSPACE='D:\Code\test\testdir'
+pnpm dev:desktop
+```
+
+真实 desktop 启动烟测：
+
+```bash
+pnpm test:desktop:smoke
+```
+
+这条 smoke test 会跳过目录选择对话框，直接用 `TASKS_DISPATCHER_WORKSPACE` 启动 built desktop app。
+
 ### 3. Run The CLI
 
 CLI 默认使用当前 shell 的 `cwd` 作为任务空间。
@@ -131,4 +152,3 @@ packages/
 - [Core Task Model](D:\Code\Projects\tasks-dispatcher\packages\core\src\domain\Task.ts)
 - [Execution Coordinator](D:\Code\Projects\tasks-dispatcher\packages\workspace-runtime\src\dispatching\ExecutionCoordinator.ts)
 - [Desktop Task Board](D:\Code\Projects\tasks-dispatcher\apps\desktop\src\renderer\pages\TaskBoardPage.tsx)
-

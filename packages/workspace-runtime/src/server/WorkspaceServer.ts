@@ -146,8 +146,9 @@ export class WorkspaceServer {
           pathSegments[3] &&
           pathSegments[4] === "log"
         ) {
+          const log = await this.#queries.readAttemptLog(taskId, pathSegments[3]);
           response.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-          response.end(await this.#queries.readAttemptLog(taskId, pathSegments[3]));
+          response.end(log);
           return;
         }
 
@@ -176,9 +177,14 @@ export class WorkspaceServer {
 
       writeJson(response, 404, { error: "Route not found." });
     } catch (error) {
-      writeJson(response, 500, {
-        error: error instanceof Error ? error.message : "Unexpected runtime error."
-      });
+      if (!response.headersSent && !response.writableEnded) {
+        writeJson(response, 500, {
+          error: error instanceof Error ? error.message : "Unexpected runtime error."
+        });
+        return;
+      }
+
+      response.end();
     }
   }
 }

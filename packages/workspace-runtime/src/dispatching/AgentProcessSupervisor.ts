@@ -18,6 +18,10 @@ interface StageEvent {
   stage: ExecutionStage;
 }
 
+interface CompletionDeclaredEvent {
+  declared: true;
+}
+
 interface ExitEvent {
   reason: SupervisorTerminationReason;
 }
@@ -85,6 +89,13 @@ export class AgentProcessSupervisor {
     return () => this.#events.off("exit", listener);
   }
 
+  onCompletionDeclared(
+    listener: (event: CompletionDeclaredEvent) => void
+  ): () => void {
+    this.#events.on("completion-declared", listener);
+    return () => this.#events.off("completion-declared", listener);
+  }
+
   #handleChunk(chunk: string, stream: "stdout" | "stderr"): void {
     this.#events.emit("chunk", { chunk, stream } satisfies ProcessChunkEvent);
 
@@ -110,6 +121,13 @@ export class AgentProcessSupervisor {
       if (normalizedLine === "TASKS_DISPATCHER_STAGE:self_check") {
         this.#events.emit("stage", { stage: "self_check" } satisfies StageEvent);
       }
+
+      if (normalizedLine === "TASKS_DISPATCHER_STAGE:complete") {
+        this.#events.emit(
+          "completion-declared",
+          { declared: true } satisfies CompletionDeclaredEvent
+        );
+      }
     }
   }
 
@@ -131,6 +149,13 @@ export class AgentProcessSupervisor {
 
     if (remainingLine === "TASKS_DISPATCHER_STAGE:self_check") {
       this.#events.emit("stage", { stage: "self_check" } satisfies StageEvent);
+    }
+
+    if (remainingLine === "TASKS_DISPATCHER_STAGE:complete") {
+      this.#events.emit(
+        "completion-declared",
+        { declared: true } satisfies CompletionDeclaredEvent
+      );
     }
   }
 }
