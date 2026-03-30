@@ -18,6 +18,8 @@ export class WorkspaceStorage {
     mkdirSync(paths.stateRoot, { recursive: true });
     mkdirSync(paths.logsRoot, { recursive: true });
     mkdirSync(paths.runtimeRoot, { recursive: true });
+    mkdirSync(paths.resultsRoot, { recursive: true });
+    mkdirSync(paths.abortSignalsRoot, { recursive: true });
 
     const database = new DatabaseSync(paths.databasePath);
     database.exec("PRAGMA foreign_keys = ON;");

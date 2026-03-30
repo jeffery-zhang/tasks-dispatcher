@@ -1,4 +1,5 @@
 import type { TaskDetailDto } from "@tasks-dispatcher/core/contracts";
+import { formatTerminationReason } from "../board/failureLabels.js";
 
 interface TaskSessionListProps {
   attempts: TaskDetailDto["attempts"];
@@ -23,6 +24,11 @@ export function TaskSessionList({
             <p className="mt-1 text-sm text-base-content/65">
               {attempt.status} / {attempt.stage}
             </p>
+            {attempt.terminationReason ? (
+              <p className="mt-1 text-xs text-base-content/50">
+                {formatTerminationReason(attempt.terminationReason)}
+              </p>
+            ) : null}
           </div>
           <button
             className="btn btn-outline btn-sm"

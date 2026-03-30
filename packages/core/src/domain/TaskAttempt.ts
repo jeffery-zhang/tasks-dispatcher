@@ -14,6 +14,7 @@ export const ATTEMPT_TERMINATION_REASONS = [
   "process_exit_non_zero",
   "signal_terminated",
   "startup_failed",
+  "protocol_failure",
   "manually_aborted"
 ] as const;
 

@@ -1,5 +1,6 @@
 import type { TaskSummaryDto } from "@tasks-dispatcher/core/contracts";
 import { TaskStatusActions } from "./TaskStatusActions.js";
+import { formatTerminationReason } from "../board/failureLabels.js";
 
 interface TaskCardProps {
   task: TaskSummaryDto;
@@ -18,6 +19,11 @@ export function TaskCard({
   onArchive,
   onAbort
 }: TaskCardProps) {
+  const failureReason =
+    task.state === "execution_failed"
+      ? formatTerminationReason(task.currentAttemptTerminationReason)
+      : null;
+
   return (
     <article className="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
@@ -36,6 +42,12 @@ export function TaskCard({
       >
         {task.description}
       </p>
+
+      {failureReason ? (
+        <div className="mt-3">
+          <span className="badge badge-error badge-soft">{failureReason}</span>
+        </div>
+      ) : null}
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <button

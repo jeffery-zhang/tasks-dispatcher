@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { TaskDetailDto } from "@tasks-dispatcher/core/contracts";
 import { OverlayModal } from "./OverlayModal.js";
+import { formatTerminationReason } from "../board/failureLabels.js";
 
 interface TaskSessionDetailModalProps {
   attempt: TaskDetailDto["attempts"][number] | null;
@@ -43,7 +44,7 @@ export function TaskSessionDetailModal({
           <article className="rounded-box border border-base-300 bg-base-200/40 p-4">
             <h3 className="font-semibold">Termination</h3>
             <p className="mt-2 text-sm text-base-content/70">
-              {attempt.terminationReason ?? "n/a"}
+              {formatTerminationReason(attempt.terminationReason)}
             </p>
           </article>
         </div>

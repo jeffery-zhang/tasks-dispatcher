@@ -3,11 +3,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { ExecutionStage } from "@tasks-dispatcher/core";
 
 export type SupervisorTerminationReason =
-  | "completed"
-  | "process_exit_non_zero"
-  | "signal_terminated"
-  | "startup_failed"
-  | "manually_aborted";
+  | "startup_failed";
 
 interface ProcessChunkEvent {
   chunk: string;
@@ -22,15 +18,20 @@ interface CompletionDeclaredEvent {
   declared: true;
 }
 
+interface AbortConfirmedEvent {
+  confirmed: true;
+}
+
 interface ExitEvent {
-  reason: SupervisorTerminationReason;
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  reason: SupervisorTerminationReason | null;
 }
 
 export class AgentProcessSupervisor {
   readonly #process: ChildProcessWithoutNullStreams;
   readonly #events = new EventEmitter();
   #lineBuffer = "";
-  #abortRequested = false;
   #started = false;
 
   constructor(childProcess: ChildProcessWithoutNullStreams) {
@@ -51,26 +52,29 @@ export class AgentProcessSupervisor {
       this.#handleChunk(chunk.toString("utf8"), "stderr");
     });
     this.#process.on("error", () => {
-      this.#events.emit("exit", { reason: "startup_failed" } satisfies ExitEvent);
+      this.#events.emit(
+        "exit",
+        {
+          code: null,
+          signal: null,
+          reason: "startup_failed"
+        } satisfies ExitEvent
+      );
     });
     this.#process.on("close", (code, signal) => {
       this.#flushBufferedStdout();
-
-      const reason: SupervisorTerminationReason =
-        this.#abortRequested
-          ? "manually_aborted"
-          : code === 0
-            ? "completed"
-            : signal
-              ? "signal_terminated"
-              : "process_exit_non_zero";
-
-      this.#events.emit("exit", { reason } satisfies ExitEvent);
+      this.#events.emit(
+        "exit",
+        {
+          code,
+          signal,
+          reason: null
+        } satisfies ExitEvent
+      );
     });
   }
 
   abort(): void {
-    this.#abortRequested = true;
     this.#process.kill("SIGTERM");
   }
 
@@ -94,6 +98,11 @@ export class AgentProcessSupervisor {
   ): () => void {
     this.#events.on("completion-declared", listener);
     return () => this.#events.off("completion-declared", listener);
+  }
+
+  onAbortConfirmed(listener: (event: AbortConfirmedEvent) => void): () => void {
+    this.#events.on("abort-confirmed", listener);
+    return () => this.#events.off("abort-confirmed", listener);
   }
 
   #handleChunk(chunk: string, stream: "stdout" | "stderr"): void {
@@ -128,6 +137,13 @@ export class AgentProcessSupervisor {
           { declared: true } satisfies CompletionDeclaredEvent
         );
       }
+
+      if (normalizedLine === "TASKS_DISPATCHER_ABORT_CONFIRMED") {
+        this.#events.emit(
+          "abort-confirmed",
+          { confirmed: true } satisfies AbortConfirmedEvent
+        );
+      }
     }
   }
 
@@ -155,6 +171,13 @@ export class AgentProcessSupervisor {
       this.#events.emit(
         "completion-declared",
         { declared: true } satisfies CompletionDeclaredEvent
+      );
+    }
+
+    if (remainingLine === "TASKS_DISPATCHER_ABORT_CONFIRMED") {
+      this.#events.emit(
+        "abort-confirmed",
+        { confirmed: true } satisfies AbortConfirmedEvent
       );
     }
   }

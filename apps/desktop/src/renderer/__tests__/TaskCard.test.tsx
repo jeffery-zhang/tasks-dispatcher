@@ -11,7 +11,8 @@ const task: TaskSummaryDto = {
   state: "initializing",
   agent: "codex-cli",
   updatedAt: "2026-03-29T00:00:00.000Z",
-  currentAttemptId: null
+  currentAttemptId: null,
+  currentAttemptTerminationReason: null
 };
 
 describe("TaskCard", () => {
@@ -31,5 +32,25 @@ describe("TaskCard", () => {
     expect(markup).toContain("Details");
     expect(markup).toContain("Queue");
     expect(markup).toContain("initializing");
+  });
+
+  it("renders a failure hint on failed cards", () => {
+    const markup = renderToStaticMarkup(
+      <TaskCard
+        task={{
+          ...task,
+          state: "execution_failed",
+          currentAttemptId: "attempt-1",
+          currentAttemptTerminationReason: "protocol_failure"
+        }}
+        onAbort={vi.fn()}
+        onArchive={vi.fn()}
+        onOpenDetails={vi.fn()}
+        onQueue={vi.fn()}
+        onReopen={vi.fn()}
+      />
+    );
+
+    expect(markup).toContain("Protocol Failure");
   });
 });

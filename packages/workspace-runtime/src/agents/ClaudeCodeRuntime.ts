@@ -1,12 +1,20 @@
 import type { TaskDetailDto } from "@tasks-dispatcher/core/contracts";
 import { buildExecutionPrompt } from "./AgentPromptFactory.js";
-import type { AgentLaunchSpec, AgentRuntime } from "./AgentRuntime.js";
+import {
+  createAgentAttemptWrapperLaunchSpec,
+  type AgentLaunchContext,
+  type AgentRuntime
+} from "./AgentRuntime.js";
 
 export class ClaudeCodeRuntime implements AgentRuntime {
   readonly kind = "claude-code" as const;
 
-  createLaunchSpec(task: TaskDetailDto): AgentLaunchSpec {
-    return {
+  createLaunchSpec(
+    task: TaskDetailDto,
+    context: AgentLaunchContext
+  ) {
+    return createAgentAttemptWrapperLaunchSpec(
+      {
       command: "claude",
       args: [
         "-p",
@@ -15,7 +23,8 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         "bypassPermissions",
         buildExecutionPrompt(task)
       ]
-    };
+      },
+      context
+    );
   }
 }
-

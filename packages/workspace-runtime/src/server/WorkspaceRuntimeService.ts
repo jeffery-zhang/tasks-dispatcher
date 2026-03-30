@@ -5,14 +5,11 @@ import {
   ReopenTaskService,
   QueueTaskService,
   TaskEvent,
-  Task,
   WorkspaceSession,
   toTaskDetailDto,
   type CreateRuntimeTaskInput,
-  type TaskDetailDto,
-  type TaskRepository
+  type TaskDetailDto
 } from "@tasks-dispatcher/core";
-import { AbortTaskService } from "@tasks-dispatcher/core";
 import { SystemClock } from "../bootstrap/SystemClock.js";
 import { RandomIdGenerator } from "../bootstrap/RandomIdGenerator.js";
 import { ConcurrencyGate } from "../dispatching/ConcurrencyGate.js";
@@ -22,6 +19,8 @@ import { LocalAgentRuntimeRegistry } from "../agents/LocalAgentRuntimeRegistry.j
 import { NodeChildProcessRunner } from "../agents/NodeChildProcessRunner.js";
 import { LocalEventBus } from "../events/LocalEventBus.js";
 import { TaskLogFileStore } from "../persistence/TaskLogFileStore.js";
+import { AttemptResultFileStore } from "../persistence/AttemptResultFileStore.js";
+import { AttemptAbortSignalStore } from "../persistence/AttemptAbortSignalStore.js";
 import { SqliteTaskEventStore } from "../persistence/SqliteTaskEventStore.js";
 import { SqliteTaskRepository } from "../persistence/SqliteTaskRepository.js";
 import { SqliteWorkspaceSessionStore } from "../persistence/SqliteWorkspaceSessionStore.js";
@@ -43,7 +42,6 @@ export class WorkspaceRuntimeService {
   readonly #queueTaskService: QueueTaskService;
   readonly #reopenTaskService: ReopenTaskService;
   readonly #archiveTaskService: ArchiveTaskService;
-  readonly #abortTaskService: AbortTaskService;
   readonly #getTaskBoardService: GetTaskBoardService;
 
   private constructor(workspaceRoot: string) {
@@ -68,6 +66,8 @@ export class WorkspaceRuntimeService {
       agentRuntimeRegistry,
       childProcessRunner: new NodeChildProcessRunner(),
       taskLogFileStore: this.#taskLogFileStore,
+      attemptResultFileStore: new AttemptResultFileStore(this.#storage.paths),
+      attemptAbortSignalStore: new AttemptAbortSignalStore(this.#storage.paths),
       eventBus: this.#eventBus,
       clock: this.#clock,
       idGenerator: this.#idGenerator,
@@ -91,7 +91,6 @@ export class WorkspaceRuntimeService {
     this.#queueTaskService = new QueueTaskService(serviceDeps);
     this.#reopenTaskService = new ReopenTaskService(serviceDeps);
     this.#archiveTaskService = new ArchiveTaskService(serviceDeps);
-    this.#abortTaskService = new AbortTaskService(serviceDeps);
     this.#getTaskBoardService = new GetTaskBoardService(this.#taskRepository);
   }
 
@@ -167,16 +166,10 @@ export class WorkspaceRuntimeService {
   }
 
   async abortTask(taskId: string): Promise<TaskDetailDto> {
-    try {
-      const task = await this.#executionCoordinator.abortTask(taskId);
+    const task = await this.#executionCoordinator.abortTask(taskId);
 
-      this.#eventBus.emit({ type: "task.updated", taskId, task });
-      return task;
-    } catch {
-      const task = await this.#abortTaskService.execute(taskId);
-      this.#eventBus.emit({ type: "task.updated", taskId, task });
-      return task;
-    }
+    this.#eventBus.emit({ type: "task.updated", taskId, task });
+    return task;
   }
 
   async readAttemptLog(taskId: string, attemptId: string): Promise<string> {

@@ -17,6 +17,9 @@ import {
 } from "../startup/desktopStartup.js";
 
 function toSummaryFromDetail(task: TaskDetailDto): TaskSummaryDto {
+  const currentAttempt =
+    task.attempts.find((attempt) => attempt.id === task.currentAttemptId) ?? null;
+
   return {
     id: task.id,
     title: task.title,
@@ -24,7 +27,8 @@ function toSummaryFromDetail(task: TaskDetailDto): TaskSummaryDto {
     state: task.state,
     agent: task.agent,
     updatedAt: task.updatedAt,
-    currentAttemptId: task.currentAttemptId
+    currentAttemptId: task.currentAttemptId,
+    currentAttemptTerminationReason: currentAttempt?.terminationReason ?? null
   };
 }
 

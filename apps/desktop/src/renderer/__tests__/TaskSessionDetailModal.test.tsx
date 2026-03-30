@@ -23,4 +23,23 @@ describe("TaskSessionDetailModal", () => {
     expect(markup).toContain("Show Logs");
     expect(markup).not.toContain("line one");
   });
+
+  it("formats termination reasons for failed sessions", () => {
+    const markup = renderToStaticMarkup(
+      <TaskSessionDetailModal
+        attempt={{
+          id: "attempt-2",
+          status: "failed",
+          stage: "self_check",
+          terminationReason: "manually_aborted"
+        }}
+        isCurrentAttempt={false}
+        log=""
+        onClose={vi.fn()}
+        open={true}
+      />
+    );
+
+    expect(markup).toContain("Manually Aborted");
+  });
 });

@@ -12,6 +12,7 @@ export interface TaskSummaryDto {
   agent: AgentKind;
   updatedAt: string;
   currentAttemptId: string | null;
+  currentAttemptTerminationReason: TaskAttemptTerminationReason | null;
 }
 
 export interface TaskDetailDto {
@@ -35,6 +36,8 @@ export interface TaskDetailDto {
 
 export function toTaskSummaryDto(task: Task): TaskSummaryDto {
   const snapshot = task.toSnapshot();
+  const currentAttempt =
+    snapshot.attempts.find((attempt) => attempt.id === snapshot.currentAttemptId) ?? null;
 
   return {
     id: snapshot.id,
@@ -43,7 +46,8 @@ export function toTaskSummaryDto(task: Task): TaskSummaryDto {
     state: snapshot.state,
     agent: snapshot.agent,
     updatedAt: snapshot.updatedAt,
-    currentAttemptId: snapshot.currentAttemptId
+    currentAttemptId: snapshot.currentAttemptId,
+    currentAttemptTerminationReason: currentAttempt?.terminationReason ?? null
   };
 }
 

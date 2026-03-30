@@ -1,12 +1,20 @@
 import type { TaskDetailDto } from "@tasks-dispatcher/core/contracts";
 import { buildExecutionPrompt } from "./AgentPromptFactory.js";
-import type { AgentLaunchSpec, AgentRuntime } from "./AgentRuntime.js";
+import {
+  createAgentAttemptWrapperLaunchSpec,
+  type AgentLaunchContext,
+  type AgentRuntime
+} from "./AgentRuntime.js";
 
 export class CodexCliRuntime implements AgentRuntime {
   readonly kind = "codex-cli" as const;
 
-  createLaunchSpec(task: TaskDetailDto): AgentLaunchSpec {
-    return {
+  createLaunchSpec(
+    task: TaskDetailDto,
+    context: AgentLaunchContext
+  ) {
+    return createAgentAttemptWrapperLaunchSpec(
+      {
       command: "codex",
       args: [
         "exec",
@@ -15,6 +23,8 @@ export class CodexCliRuntime implements AgentRuntime {
         "-"
       ],
       stdinText: buildExecutionPrompt(task)
-    };
+      },
+      context
+    );
   }
 }

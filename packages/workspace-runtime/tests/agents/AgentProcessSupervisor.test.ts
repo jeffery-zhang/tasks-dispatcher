@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AgentProcessSupervisor } from "../../src/dispatching/AgentProcessSupervisor.js";
 
 describe("AgentProcessSupervisor", () => {
-  it("parses stage markers from stdout and reports clean completion", async () => {
+  it("parses stage markers from stdout and reports raw close metadata", async () => {
     const childProcess = spawn(
       process.execPath,
       [
@@ -19,22 +19,30 @@ describe("AgentProcessSupervisor", () => {
     const supervisor = new AgentProcessSupervisor(childProcess);
     const stages: string[] = [];
 
-    const completion = new Promise<string>((resolve) => {
+    const completion = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+      reason: "startup_failed" | null;
+    }>((resolve) => {
       supervisor.onStage((event) => {
         stages.push(event.stage);
       });
       supervisor.onExit((event) => {
-        resolve(event.reason);
+        resolve(event);
       });
     });
 
     supervisor.start();
 
-    expect(await completion).toBe("completed");
+    expect(await completion).toEqual({
+      code: 0,
+      signal: null,
+      reason: null
+    });
     expect(stages).toEqual(["plan", "develop", "self_check"]);
   });
 
-  it("emits a completion declaration when the agent prints the complete marker", async () => {
+  it("still emits a completion declaration marker without treating it as final success", async () => {
     const childProcess = spawn(
       process.execPath,
       [
@@ -49,18 +57,26 @@ describe("AgentProcessSupervisor", () => {
     const supervisor = new AgentProcessSupervisor(childProcess);
     const completionDeclarations: boolean[] = [];
 
-    const completion = new Promise<string>((resolve) => {
+    const completion = new Promise<{
+      code: number | null;
+      signal: NodeJS.Signals | null;
+      reason: "startup_failed" | null;
+    }>((resolve) => {
       supervisor.onCompletionDeclared(() => {
         completionDeclarations.push(true);
       });
       supervisor.onExit((event) => {
-        resolve(event.reason);
+        resolve(event);
       });
     });
 
     supervisor.start();
 
-    expect(await completion).toBe("completed");
+    expect(await completion).toEqual({
+      code: 0,
+      signal: null,
+      reason: null
+    });
     expect(completionDeclarations).toEqual([true]);
   });
 });

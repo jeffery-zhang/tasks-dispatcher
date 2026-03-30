@@ -56,5 +56,24 @@ describe("TaskAttempt", () => {
       terminationReason: "manually_aborted"
     });
   });
-});
 
+  it("records protocol failures as failed attempts", () => {
+    const attempt = TaskAttempt.createQueued({
+      id: "attempt-1",
+      taskId: "task-1",
+      agent: "codex-cli",
+      createdAt: new Date("2026-03-29T00:00:00.000Z")
+    });
+
+    attempt.start(new Date("2026-03-29T00:01:00.000Z"));
+    attempt.markFailed(
+      "protocol_failure",
+      new Date("2026-03-29T00:02:00.000Z")
+    );
+
+    expect(attempt.toSnapshot()).toMatchObject({
+      status: "failed",
+      terminationReason: "protocol_failure"
+    });
+  });
+});

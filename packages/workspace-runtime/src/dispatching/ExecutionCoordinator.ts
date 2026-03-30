@@ -13,12 +13,18 @@ import { AgentProcessSupervisor } from "./AgentProcessSupervisor.js";
 import { ConcurrencyGate } from "./ConcurrencyGate.js";
 import { LocalAgentRuntimeRegistry } from "../agents/LocalAgentRuntimeRegistry.js";
 import { NodeChildProcessRunner } from "../agents/NodeChildProcessRunner.js";
+import { WRAPPER_ABORT_EXIT_CODE } from "../agents/wrapper/AgentAttemptWrapperProtocol.js";
 import { TaskLogFileStore } from "../persistence/TaskLogFileStore.js";
+import { AttemptResultFileStore } from "../persistence/AttemptResultFileStore.js";
+import { AttemptAbortSignalStore } from "../persistence/AttemptAbortSignalStore.js";
 import { LocalEventBus } from "../events/LocalEventBus.js";
 
 interface ActiveExecution {
   supervisor: AgentProcessSupervisor;
   completion: Promise<TaskDetailDto>;
+  abortRequested: boolean;
+  attemptId: string;
+  abortConfirmed: boolean;
 }
 
 export class ExecutionCoordinator {
@@ -28,6 +34,8 @@ export class ExecutionCoordinator {
   readonly #agentRuntimeRegistry: LocalAgentRuntimeRegistry;
   readonly #childProcessRunner: NodeChildProcessRunner;
   readonly #taskLogFileStore: TaskLogFileStore;
+  readonly #attemptResultFileStore: AttemptResultFileStore;
+  readonly #attemptAbortSignalStore: AttemptAbortSignalStore;
   readonly #eventBus: LocalEventBus;
   readonly #clock: Clock;
   readonly #idGenerator: IdGenerator;
@@ -42,6 +50,8 @@ export class ExecutionCoordinator {
     agentRuntimeRegistry: LocalAgentRuntimeRegistry;
     childProcessRunner: NodeChildProcessRunner;
     taskLogFileStore: TaskLogFileStore;
+    attemptResultFileStore: AttemptResultFileStore;
+    attemptAbortSignalStore: AttemptAbortSignalStore;
     eventBus: LocalEventBus;
     clock: Clock;
     idGenerator: IdGenerator;
@@ -54,6 +64,8 @@ export class ExecutionCoordinator {
     this.#agentRuntimeRegistry = deps.agentRuntimeRegistry;
     this.#childProcessRunner = deps.childProcessRunner;
     this.#taskLogFileStore = deps.taskLogFileStore;
+    this.#attemptResultFileStore = deps.attemptResultFileStore;
+    this.#attemptAbortSignalStore = deps.attemptAbortSignalStore;
     this.#eventBus = deps.eventBus;
     this.#clock = deps.clock;
     this.#idGenerator = deps.idGenerator;
@@ -90,8 +102,20 @@ export class ExecutionCoordinator {
 
       const detail = toTaskDetailDto(task);
       const runtime = this.#agentRuntimeRegistry.get(detail.agent);
+      const attemptId = task.currentAttemptId;
+
+      if (!attemptId) {
+        throw new Error(`Task "${taskId}" has no current attempt.`);
+      }
+
       const childProcess = this.#childProcessRunner.start(
-        runtime.createLaunchSpec(detail),
+        runtime.createLaunchSpec(detail, {
+          workspaceRoot: this.#workspaceRoot,
+          taskId,
+          attemptId,
+          resultPaths: this.#attemptResultFileStore.getPaths(taskId, attemptId),
+          abortSignalPath: this.#attemptAbortSignalStore.getPath(taskId, attemptId)
+        }),
         this.#workspaceRoot
       );
       const supervisor = new AgentProcessSupervisor(childProcess);
@@ -119,25 +143,39 @@ export class ExecutionCoordinator {
       });
 
       supervisor.onStage((event) => {
-        stageUpdateQueue = stageUpdateQueue.then(() =>
-          this.#advanceStage(taskId, event.stage)
-        );
+        stageUpdateQueue = stageUpdateQueue
+          .then(() => this.#advanceStage(taskId, event.stage))
+          .catch(() => undefined);
       });
 
       supervisor.onCompletionDeclared(() => {
-        stageUpdateQueue = stageUpdateQueue.then(() =>
-          this.#advanceStage(taskId, "self_check")
-        );
+        stageUpdateQueue = stageUpdateQueue
+          .then(() => this.#advanceStage(taskId, "self_check"))
+          .catch(() => undefined);
       });
+      supervisor.onAbortConfirmed(() => {
+        const activeExecution = this.#activeExecutions.get(taskId);
 
+        if (activeExecution) {
+          activeExecution.abortConfirmed = true;
+        }
+      });
       supervisor.onExit((event) => {
         void stageUpdateQueue
-          .then(() => this.#settleTask(taskId, event.reason))
+          .catch(() => undefined)
+          .then(() => this.#settleTask(taskId, event))
           .then(resolveCompletion);
       });
 
       supervisor.start();
-      this.#activeExecutions.set(taskId, { supervisor, completion });
+      this.#attemptAbortSignalStore.clear(taskId, attemptId);
+      this.#activeExecutions.set(taskId, {
+        supervisor,
+        completion,
+        abortRequested: false,
+        attemptId,
+        abortConfirmed: false
+      });
     } catch (error) {
       this.#concurrencyGate.release();
       throw error;
@@ -154,15 +192,17 @@ export class ExecutionCoordinator {
         throw new Error(`Task "${taskId}" was not found.`);
       }
 
-      task.abortCurrentAttempt(this.#clock.now());
-      await this.#taskRepository.save(task);
-      await this.#appendTaskEvent(taskId, "task_aborted");
-      await this.#emitTaskUpdate(taskId);
+      if (task.state !== "executing") {
+        return toTaskDetailDto(task);
+      }
 
-      return toTaskDetailDto(task);
+      throw new Error(
+        `Task "${taskId}" is executing but has no active runtime process.`
+      );
     }
 
-    activeExecution.supervisor.abort();
+    activeExecution.abortRequested = true;
+    this.#attemptAbortSignalStore.requestAbort(taskId, activeExecution.attemptId);
     return activeExecution.completion;
   }
 
@@ -194,12 +234,11 @@ export class ExecutionCoordinator {
 
   async #settleTask(
     taskId: string,
-    reason:
-      | "completed"
-      | "process_exit_non_zero"
-      | "signal_terminated"
-      | "startup_failed"
-      | "manually_aborted"
+    exitEvent: {
+      code: number | null;
+      signal: NodeJS.Signals | null;
+      reason: "startup_failed" | null;
+    }
   ): Promise<TaskDetailDto> {
     try {
       const task = await this.#taskRepository.getById(taskId);
@@ -208,29 +247,65 @@ export class ExecutionCoordinator {
         throw new Error(`Task "${taskId}" was not found.`);
       }
 
-      if (reason === "completed") {
+      const activeExecution = this.#activeExecutions.get(taskId);
+      const currentAttemptId = task.currentAttemptId;
+
+      if (!currentAttemptId) {
+        throw new Error(`Task "${taskId}" has no current attempt.`);
+      }
+
+      const abortConfirmedFromLog = activeExecution?.abortRequested
+        ? this.#didWrapperConfirmAbort(taskId, currentAttemptId)
+        : false;
+      const abortConfirmed =
+        activeExecution?.abortRequested === true &&
+        (activeExecution.abortConfirmed === true ||
+          abortConfirmedFromLog ||
+          exitEvent.code === WRAPPER_ABORT_EXIT_CODE);
+      const attemptResult = this.#attemptResultFileStore.read(taskId, currentAttemptId);
+
+      if (abortConfirmed) {
+        task.markExecutionFailed("manually_aborted", this.#clock.now());
+        await this.#taskRepository.save(task);
+        await this.#appendTaskEvent(taskId, "task_aborted");
+      } else if (exitEvent.reason === "startup_failed") {
+        task.markExecutionFailed("startup_failed", this.#clock.now());
+        await this.#taskRepository.save(task);
+        await this.#appendTaskEvent(taskId, "execution_failed");
+      } else if (exitEvent.code === 0 && attemptResult) {
         task.markAwaitingValidation(this.#clock.now());
         await this.#taskRepository.save(task);
         await this.#appendTaskEvent(taskId, "validation_requested");
-      } else {
-        task.markExecutionFailed(reason, this.#clock.now());
+      } else if (exitEvent.code === 0) {
+        task.markExecutionFailed("protocol_failure", this.#clock.now());
         await this.#taskRepository.save(task);
-        await this.#appendTaskEvent(
-          taskId,
-          reason === "manually_aborted" ? "task_aborted" : "execution_failed"
-        );
+        await this.#appendTaskEvent(taskId, "execution_failed");
+      } else if (exitEvent.signal) {
+        task.markExecutionFailed("signal_terminated", this.#clock.now());
+        await this.#taskRepository.save(task);
+        await this.#appendTaskEvent(taskId, "execution_failed");
+      } else {
+        task.markExecutionFailed("process_exit_non_zero", this.#clock.now());
+        await this.#taskRepository.save(task);
+        await this.#appendTaskEvent(taskId, "execution_failed");
       }
 
       const detail = toTaskDetailDto(task);
 
       this.#activeExecutions.delete(taskId);
+      this.#attemptAbortSignalStore.clear(taskId, currentAttemptId);
       this.#concurrencyGate.release();
       await this.#emitTaskUpdate(taskId);
       await this.#onSettled();
 
       return detail;
     } catch (error) {
+      const activeExecution = this.#activeExecutions.get(taskId);
+
       this.#activeExecutions.delete(taskId);
+      if (activeExecution) {
+        this.#attemptAbortSignalStore.clear(taskId, activeExecution.attemptId);
+      }
       this.#concurrencyGate.release();
       await this.#onSettled();
       throw error;
@@ -268,5 +343,15 @@ export class ExecutionCoordinator {
       taskId,
       task: toTaskDetailDto(task)
     });
+  }
+
+  #didWrapperConfirmAbort(taskId: string, attemptId: string): boolean {
+    try {
+      return this.#taskLogFileStore
+        .read(taskId, attemptId)
+        .includes("TASKS_DISPATCHER_ABORT_CONFIRMED");
+    } catch {
+      return false;
+    }
   }
 }

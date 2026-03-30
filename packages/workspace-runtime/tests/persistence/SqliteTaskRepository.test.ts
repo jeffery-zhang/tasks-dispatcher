@@ -87,4 +87,39 @@ describe("SqliteTaskRepository", () => {
       storageB.close();
     }
   });
+
+  it("round-trips protocol_failure termination reasons", async () => {
+    const workspaceRoot = createWorkspaceRoot();
+    const storage = WorkspaceStorage.open(workspaceRoot);
+    const repository = new SqliteTaskRepository(storage.database);
+    const task = Task.createDraft({
+      id: "task-failure",
+      title: "Protocol failure",
+      description: "Persist protocol failure attempts",
+      agent: "codex-cli",
+      createdAt: new Date("2026-03-29T00:00:00.000Z")
+    });
+
+    task.queueForExecution({
+      attemptId: "attempt-failure",
+      queuedAt: new Date("2026-03-29T00:01:00.000Z")
+    });
+    task.markExecuting(new Date("2026-03-29T00:02:00.000Z"));
+    task.markExecutionFailed(
+      "protocol_failure",
+      new Date("2026-03-29T00:03:00.000Z")
+    );
+
+    try {
+      await repository.save(task);
+      const reloadedTask = await repository.getById("task-failure");
+
+      expect(reloadedTask?.toSnapshot().attempts.at(-1)).toMatchObject({
+        status: "failed",
+        terminationReason: "protocol_failure"
+      });
+    } finally {
+      storage.close();
+    }
+  });
 });
