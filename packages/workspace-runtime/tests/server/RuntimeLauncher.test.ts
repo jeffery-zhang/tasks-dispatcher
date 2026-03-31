@@ -117,7 +117,7 @@ describe("RuntimeLauncher", () => {
     const created = await firstClient.createTask({
       title: "Restarted runtime task",
       description: "Verify restarted runtime",
-      agent: "codex-cli"
+      workflowId: "default-plan-work-review"
     });
     const firstRuntime = readRuntimeMetadata(workspaceRoot);
 

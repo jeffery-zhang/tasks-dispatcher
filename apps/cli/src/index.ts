@@ -38,14 +38,14 @@ async function main(): Promise<void> {
         options: {
           title: { type: "string" },
           description: { type: "string" },
-          agent: { type: "string" }
+          workflow: { type: "string" }
         }
       });
 
       await runCreateTaskCommand(context, {
         title: assertString(values.title, "--title"),
         description: assertString(values.description, "--description"),
-        agent: assertString(values.agent, "--agent") as "claude-code" | "codex-cli"
+        workflowId: assertString(values.workflow, "--workflow")
       });
       return;
     }

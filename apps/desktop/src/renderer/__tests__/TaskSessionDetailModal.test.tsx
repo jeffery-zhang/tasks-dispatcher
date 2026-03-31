@@ -9,8 +9,13 @@ describe("TaskSessionDetailModal", () => {
         attempt={{
           id: "attempt-1",
           status: "running",
-          stage: "develop",
-          terminationReason: null
+          workflowId: "default-plan-work-review",
+          workflowLabel: "Default Plan / Work / Review",
+          currentStepKey: "work",
+          startedAt: "2026-03-29T00:01:00.000Z",
+          finishedAt: null,
+          terminationReason: null,
+          steps: []
         }}
         isCurrentAttempt={true}
         log={"line one\nline two"}
@@ -30,8 +35,13 @@ describe("TaskSessionDetailModal", () => {
         attempt={{
           id: "attempt-2",
           status: "failed",
-          stage: "self_check",
-          terminationReason: "manually_aborted"
+          workflowId: "default-plan-work-review",
+          workflowLabel: "Default Plan / Work / Review",
+          currentStepKey: "review",
+          startedAt: "2026-03-29T00:01:00.000Z",
+          finishedAt: "2026-03-29T00:05:00.000Z",
+          terminationReason: "manually_aborted",
+          steps: []
         }}
         isCurrentAttempt={false}
         log=""

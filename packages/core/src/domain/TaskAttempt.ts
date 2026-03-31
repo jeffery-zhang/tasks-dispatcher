@@ -1,5 +1,9 @@
-import type { AgentKind } from "./AgentKind.js";
 import type { ExecutionStage } from "./ExecutionStage.js";
+import {
+  TaskAttemptStep,
+  type TaskAttemptStepSnapshot
+} from "./TaskAttemptStep.js";
+import type { WorkflowStepDefinition } from "./TaskWorkflow.js";
 
 export const ATTEMPT_STATUSES = [
   "queued",
@@ -15,7 +19,8 @@ export const ATTEMPT_TERMINATION_REASONS = [
   "signal_terminated",
   "startup_failed",
   "protocol_failure",
-  "manually_aborted"
+  "manually_aborted",
+  "needs_input"
 ] as const;
 
 export type TaskAttemptTerminationReason =
@@ -24,9 +29,11 @@ export type TaskAttemptTerminationReason =
 export interface TaskAttemptSnapshot {
   id: string;
   taskId: string;
-  agent: AgentKind;
   status: TaskAttemptStatus;
-  stage: ExecutionStage;
+  workflowId: string;
+  workflowLabel: string;
+  currentStepKey: ExecutionStage | null;
+  steps: TaskAttemptStepSnapshot[];
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -36,16 +43,20 @@ export interface TaskAttemptSnapshot {
 interface CreateQueuedTaskAttemptInput {
   id: string;
   taskId: string;
-  agent: AgentKind;
+  workflowId: string;
+  workflowLabel: string;
+  steps: WorkflowStepDefinition[];
   createdAt: Date;
 }
 
 export class TaskAttempt {
   readonly #id: string;
   readonly #taskId: string;
-  readonly #agent: AgentKind;
+  readonly #workflowId: string;
+  readonly #workflowLabel: string;
   #status: TaskAttemptStatus;
-  #stage: ExecutionStage;
+  #currentStepKey: ExecutionStage | null;
+  readonly #steps: TaskAttemptStep[];
   readonly #createdAt: Date;
   #startedAt: Date | null;
   #finishedAt: Date | null;
@@ -54,9 +65,11 @@ export class TaskAttempt {
   private constructor(props: {
     id: string;
     taskId: string;
-    agent: AgentKind;
+    workflowId: string;
+    workflowLabel: string;
     status: TaskAttemptStatus;
-    stage: ExecutionStage;
+    currentStepKey?: ExecutionStage | null;
+    steps: TaskAttemptStep[];
     createdAt: Date;
     startedAt?: Date | null;
     finishedAt?: Date | null;
@@ -64,9 +77,11 @@ export class TaskAttempt {
   }) {
     this.#id = props.id;
     this.#taskId = props.taskId;
-    this.#agent = props.agent;
+    this.#workflowId = props.workflowId;
+    this.#workflowLabel = props.workflowLabel;
     this.#status = props.status;
-    this.#stage = props.stage;
+    this.#currentStepKey = props.currentStepKey ?? null;
+    this.#steps = props.steps;
     this.#createdAt = props.createdAt;
     this.#startedAt = props.startedAt ?? null;
     this.#finishedAt = props.finishedAt ?? null;
@@ -76,8 +91,8 @@ export class TaskAttempt {
   static createQueued(input: CreateQueuedTaskAttemptInput): TaskAttempt {
     return new TaskAttempt({
       ...input,
-      status: "queued",
-      stage: "plan"
+      steps: input.steps.map((step) => TaskAttemptStep.fromDefinition(step)),
+      status: "queued"
     });
   }
 
@@ -85,9 +100,11 @@ export class TaskAttempt {
     return new TaskAttempt({
       id: snapshot.id,
       taskId: snapshot.taskId,
-      agent: snapshot.agent,
+      workflowId: snapshot.workflowId,
+      workflowLabel: snapshot.workflowLabel,
       status: snapshot.status,
-      stage: snapshot.stage,
+      currentStepKey: snapshot.currentStepKey,
+      steps: snapshot.steps.map((step) => TaskAttemptStep.rehydrate(step)),
       createdAt: new Date(snapshot.createdAt),
       startedAt: snapshot.startedAt ? new Date(snapshot.startedAt) : null,
       finishedAt: snapshot.finishedAt ? new Date(snapshot.finishedAt) : null,
@@ -99,25 +116,56 @@ export class TaskAttempt {
     return this.#id;
   }
 
+  get currentStepKey(): ExecutionStage | null {
+    return this.#currentStepKey;
+  }
+
   start(startedAt: Date): void {
     if (this.#status !== "queued") {
       throw new Error(`Attempt "${this.#id}" cannot start from ${this.#status}.`);
+    }
+
+    const firstStep = this.#steps.find((step) => step.status === "pending");
+
+    if (!firstStep) {
+      throw new Error(`Attempt "${this.#id}" has no steps to execute.`);
     }
 
     this.#status = "running";
     this.#startedAt = startedAt;
     this.#finishedAt = null;
     this.#terminationReason = null;
+    firstStep.start(startedAt);
+    this.#currentStepKey = firstStep.key;
   }
 
-  moveToStage(stage: ExecutionStage): void {
+  startStep(stepKey: ExecutionStage, startedAt: Date): void {
     if (this.#status !== "running") {
       throw new Error(
-        `Attempt "${this.#id}" cannot change stage from ${this.#status}.`
+        `Attempt "${this.#id}" cannot start a step from ${this.#status}.`
       );
     }
 
-    this.#stage = stage;
+    const step = this.#steps.find((candidate) => candidate.key === stepKey);
+
+    if (!step) {
+      throw new Error(`Attempt "${this.#id}" has no step "${stepKey}".`);
+    }
+
+    step.start(startedAt);
+    this.#currentStepKey = stepKey;
+  }
+
+  completeStep(stepKey: ExecutionStage, finishedAt: Date): void {
+    const step = this.#steps.find((candidate) => candidate.key === stepKey);
+
+    if (!step) {
+      throw new Error(`Attempt "${this.#id}" has no step "${stepKey}".`);
+    }
+
+    step.markCompleted(finishedAt);
+    this.#currentStepKey =
+      this.#steps.find((candidate) => candidate.status === "pending")?.key ?? null;
   }
 
   markCompleted(finishedAt: Date): void {
@@ -128,6 +176,7 @@ export class TaskAttempt {
     }
 
     this.#status = "completed";
+    this.#currentStepKey = null;
     this.#finishedAt = finishedAt;
     this.#terminationReason = null;
   }
@@ -140,6 +189,14 @@ export class TaskAttempt {
       throw new Error(`Attempt "${this.#id}" cannot fail from ${this.#status}.`);
     }
 
+    const runningStep = this.#currentStepKey
+      ? this.#steps.find((step) => step.key === this.#currentStepKey)
+      : null;
+
+    if (runningStep && runningStep.status === "running") {
+      runningStep.markFailed(terminationReason, finishedAt);
+    }
+
     this.#status = "failed";
     this.#finishedAt = finishedAt;
     this.#terminationReason = terminationReason;
@@ -149,9 +206,11 @@ export class TaskAttempt {
     return {
       id: this.#id,
       taskId: this.#taskId,
-      agent: this.#agent,
       status: this.#status,
-      stage: this.#stage,
+      workflowId: this.#workflowId,
+      workflowLabel: this.#workflowLabel,
+      currentStepKey: this.#currentStepKey,
+      steps: this.#steps.map((step) => step.toSnapshot()),
       createdAt: this.#createdAt.toISOString(),
       startedAt: this.#startedAt?.toISOString() ?? null,
       finishedAt: this.#finishedAt?.toISOString() ?? null,

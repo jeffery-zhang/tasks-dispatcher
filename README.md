@@ -75,7 +75,7 @@ pnpm test:desktop:smoke
 CLI 默认使用当前 shell 的 `cwd` 作为任务空间。
 
 ```bash
-pnpm --filter @tasks-dispatcher/cli dev -- create --title "Smoke" --description "Create a smoke task" --agent codex-cli
+pnpm --filter @tasks-dispatcher/cli dev -- create --title "Smoke" --description "Create a smoke task" --workflow default-plan-work-review
 pnpm --filter @tasks-dispatcher/cli dev -- show task-1
 pnpm --filter @tasks-dispatcher/cli dev -- queue task-1
 pnpm --filter @tasks-dispatcher/cli dev -- watch task-1

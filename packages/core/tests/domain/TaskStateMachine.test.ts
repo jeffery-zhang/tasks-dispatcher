@@ -5,41 +5,36 @@ import {
 } from "../../src/domain/TaskStateMachine.js";
 
 describe("TaskStateMachine", () => {
-  it("allows editing only in initializing and reopened states", () => {
-    expect(TaskStateMachine.canEdit("initializing")).toBe(true);
-    expect(TaskStateMachine.canEdit("reopened")).toBe(true);
-    expect(TaskStateMachine.canEdit("pending_execution")).toBe(false);
-    expect(TaskStateMachine.canEdit("execution_failed")).toBe(false);
+  it("allows editing only in draft", () => {
+    expect(TaskStateMachine.canEdit("draft")).toBe(true);
+    expect(TaskStateMachine.canEdit("ready")).toBe(false);
+    expect(TaskStateMachine.canEdit("failed")).toBe(false);
   });
 
-  it("allows queuing from initializing, reopened, and execution_failed", () => {
-    expect(() => TaskStateMachine.assertCanQueue("initializing")).not.toThrow();
-    expect(() => TaskStateMachine.assertCanQueue("reopened")).not.toThrow();
-    expect(() => TaskStateMachine.assertCanQueue("execution_failed")).not.toThrow();
+  it("allows queuing only from draft", () => {
+    expect(() => TaskStateMachine.assertCanQueue("draft")).not.toThrow();
 
-    expect(() =>
-      TaskStateMachine.assertCanQueue("pending_validation")
-    ).toThrow(TaskStateTransitionError);
+    expect(() => TaskStateMachine.assertCanQueue("ready")).toThrow(
+      TaskStateTransitionError
+    );
+    expect(() => TaskStateMachine.assertCanQueue("failed")).toThrow(
+      TaskStateTransitionError
+    );
   });
 
-  it("allows reopening only from pending_validation and execution_failed", () => {
-    expect(() =>
-      TaskStateMachine.assertCanReopen("pending_validation")
-    ).not.toThrow();
-    expect(() =>
-      TaskStateMachine.assertCanReopen("execution_failed")
-    ).not.toThrow();
+  it("allows reopening only from completed and failed", () => {
+    expect(() => TaskStateMachine.assertCanReopen("completed")).not.toThrow();
+    expect(() => TaskStateMachine.assertCanReopen("failed")).not.toThrow();
 
     expect(() => TaskStateMachine.assertCanReopen("executing")).toThrow(
       TaskStateTransitionError
     );
   });
 
-  it("only allows archiving from pending_validation", () => {
-    expect(() => TaskStateMachine.assertCanArchive("pending_validation")).not.toThrow();
-    expect(() => TaskStateMachine.assertCanArchive("reopened")).toThrow(
+  it("only allows archiving from completed", () => {
+    expect(() => TaskStateMachine.assertCanArchive("completed")).not.toThrow();
+    expect(() => TaskStateMachine.assertCanArchive("draft")).toThrow(
       TaskStateTransitionError
     );
   });
 });
-

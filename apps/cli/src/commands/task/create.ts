@@ -1,10 +1,9 @@
-import type { AgentKind } from "@tasks-dispatcher/core";
 import type { CommandContext } from "../../commandContext.js";
 
 export interface CreateTaskCommandInput {
   title: string;
   description: string;
-  agent: AgentKind;
+  workflowId: string;
 }
 
 export async function runCreateTaskCommand(
@@ -21,4 +20,3 @@ export async function runCreateTaskCommand(
     })
   );
 }
-

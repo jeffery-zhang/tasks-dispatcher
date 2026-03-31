@@ -23,13 +23,14 @@ topic: task-lifecycle-and-workflow-state
 - R7. `archived` 表示生命周期结束，不再参与活跃执行流转。
 
 **Workflow And Snapshot Semantics**
-- R8. 流程是独立于任务的概念，任务在 `draft` 期间可以选择流程。
+- R8. 流程是独立于任务的概念，任务在 `draft` 期间必须显式选择一个流程。
 - R9. 任务进入 `ready` 时，必须冻结当前流程快照；之后流程模板的变化不影响该任务。
 - R10. 任务处于 `ready` 或 `executing` 期间，不响应流程模板的后续修改。
 - R11. 任务重新 `reopen -> draft` 后，允许重新选择流程或重新冻结新的流程快照。
+- R11a. 当前版本的流程是可选但不可编辑的；系统只要求支持从固定候选中选择流程，不要求交付流程编辑器。
 
 **Attempt Model**
-- R12. 每次任务进入 `executing` 时，产生一个新的 attempt。
+- R12. 每次任务进入 `ready` 时，产生一个新的 queued attempt。
 - R13. 每个 attempt 都必须绑定自己的流程快照；旧 attempt 永远按旧快照解释，新 attempt 可以绑定新快照。
 - R14. 同一个任务在任意时刻最多只允许存在一个 active attempt。
 - R15. attempt 失败时，任务直接进入 `failed`；步骤级重试不是第一版状态模型的一部分。
@@ -42,6 +43,7 @@ topic: task-lifecycle-and-workflow-state
 - R20. 内部状态必须把“当前步骤”与“步骤运行状态”分开建模，不能混成一个字段。
 - R21. 第一步版本的步骤运行状态包含：`pending`、`running`、`completed`、`failed`、`skipped`。
 - R22. `skipped` 只表示该步骤未实际执行但被明确跳过；`running -> skipped` 不允许。
+- R22a. 当前版本保留 `skipped` 的状态定义，但不要求实现会主动产出 `skipped` 的运行规则。
 - R23. 步骤失败发生在哪一步，必须作为稳定可见的执行日志与状态信息保留。
 
 **Execution Semantics**
@@ -54,7 +56,7 @@ topic: task-lifecycle-and-workflow-state
 - R30. `completed` 与 `skipped` 都是步骤可接受终态；`failed` 不是。
 - R30a. 当前版本默认不支持执行中向用户发起交互问答；步骤执行应保持自主完成或自主失败。
 - R30b. 系统级与步骤级 prompt 都必须明确约束 agent 不得向用户提问；当信息不足时，agent 只能按最小合理假设继续，或以明确失败原因结束当前步骤。
-- R30c. 如果 agent 仍然在执行过程中产生需要用户回答的问题，runtime 不进入对话模式；该步骤与当前 attempt 必须以明确的 `needs_input` / `interaction_required` 类失败语义收口，并让任务进入 `failed`。
+- R30c. 如果 agent 仍然在执行过程中产生需要用户回答的问题，runtime 不进入对话模式；该步骤与当前 attempt 必须以明确的 `needs_input` 失败语义收口，并让任务进入 `failed`。
 
 **Machine Protocol Boundary**
 - R31. 步骤成功必须由机器判定协议决定，不能依赖 agent 的自然语言输出。
@@ -73,8 +75,9 @@ topic: task-lifecycle-and-workflow-state
 
 ## Scope Boundaries
 - 这一版只定义概念边界和产品语义，不讨论具体文件、数据库结构或 API 设计。
-- 当前版本默认流程固定为 `plan -> work -> review`，不要求立即交付自定义流程编辑器。
+- 当前版本要求任务显式选择流程，但流程候选先固定为默认 `plan -> work -> review`，不要求立即交付自定义流程编辑器。
 - 当前版本不引入步骤级重试、并行步骤、条件分支执行或多 active attempts。
+- 当前版本不要求实现会主动产出 `skipped` 的运行规则；`skipped` 先只作为保留状态定义存在。
 - 当前版本不把“步骤成功条件”开放成可编辑的 runtime 机器规则。
 - 当前版本不新增任务层的 `reopened` 状态。
 - 当前版本不引入执行中用户问答对话框、暂停恢复会话或 human-in-the-loop orchestration。
@@ -83,18 +86,23 @@ topic: task-lifecycle-and-workflow-state
 - **`completed` 是稳定等待态，不是瞬时过站**：agent 完成后，任务等待人类选择 `reopen` 或 `archive`，这样 `completed` 与 `failed` 在生命周期上更对称。
 - **`failed` 不自动回 `ready`**：失败后默认暂停，避免隐式重跑和历史混乱。
 - **`reopen` 是操作，不是状态**：任务重新进入 `draft`，恢复可编辑语义，不再保留额外的 `reopened` 生命周期状态。
+- **任务在 draft 期间必须显式选择流程**：当前版本虽然只有固定候选，但这层语义先保留下来，后续扩展多流程时不用重写任务模型。
 - **流程快照在进入 `ready` 时冻结**：这样 `ready` 才真正代表“待执行合同”，不会出现 ready 期间模板漂移。
+- **queued attempt 在进入 `ready` 时创建**：`ready` 不只是等待态，也代表“这次执行合同已经被建立”；`ready -> executing` 只是 claim 并启动已有 attempt。
 - **一个任务同一时刻只允许一个 active attempt**：这保证任务状态、当前步骤、日志和 abort 语义始终唯一。
+- **执行者语义只存在于步骤层**：流程步骤定义保存 `agent`，任务本身不再保留独立的顶层执行者语义。
 - **步骤定义与步骤运行记录分离**：模板是模板，attempt 记录是记录；否则历史会被模板编辑污染。
 - **步骤目标并入 prompt，不保留单独“完成态”字段**：减少与机器判定状态的混淆。
 - **内部两层、外部一层**：内部拆成“当前步骤”与“步骤运行状态”，外部 UI 先只展示步骤名。
 - **步骤成功必须由机器协议裁决**：prompt 可变，但步骤结果判定边界不能漂。
-- **执行中问答在当前版本一律禁止**：通过系统级 prompt、步骤级 prompt 和 runtime 失败收口三层约束，避免把这一版扩成暂停/恢复式交互执行系统。
+- **执行中问答在当前版本一律禁止**：通过系统级 prompt、步骤级 prompt 和 runtime 失败收口三层约束，统一以 `needs_input` 结束当前步骤与当前 attempt，避免把这一版扩成暂停/恢复式交互执行系统。
+- **`skipped` 先保留定义，不启用主动规则**：先把状态边界占住，但不在当前版本引入条件执行系统。
 
 ## Dependencies / Assumptions
 - runtime 已具备 attempt 级机器协议与 wrapper 执行边界，这使得后续把同样的边界下探到步骤级是可行的。
 - 未来自定义流程时，步骤模板会继续被人类编辑，但系统的机器协议必须保持固定。
 - 默认流程目前足够作为第一版状态模型的基线例子，不需要等自定义流程落地后再定义状态。
+- 当前仍处于开发阶段；本轮状态模型重构不要求兼容已有本地测试数据。
 
 ## Outstanding Questions
 
@@ -107,7 +115,7 @@ topic: task-lifecycle-and-workflow-state
 - [Affects R25-R34][Technical] 步骤级机器结果协议的 envelope、校验规则和与 agent 退出码的组合判定应如何设计。
 - [Affects R26-R28][Technical] runtime 如何稳定完成“上一步 agent 自然退出 -> 验证结果 -> 启动下一步骤 agent”的编排。
 - [Affects R21-R22][Needs research] 第一步是否需要额外引入 `aborted` 或 `cancelled` 作为步骤运行状态，还是继续用 `failed` + reason 即可。
-- [Affects R30a-R30c][Technical] runtime 应如何识别 agent 已经进入“需要用户输入”的失配路径，并将其稳定映射为统一失败原因。
+- [Affects R30a-R30c][Technical] runtime 应如何识别 agent 已经进入“需要用户输入”的失配路径，并将其稳定映射为统一的 `needs_input` 失败原因。
 
 ## Next Steps
 → /prompts:ce-plan for structured implementation planning

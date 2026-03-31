@@ -1,8 +1,7 @@
-import type { AgentKind, TaskEvent, Task } from "../../domain/index.js";
-import { Task as TaskAggregate, TaskEvent as DomainTaskEvent } from "../../domain/index.js";
 import { toTaskDetailDto } from "../../contracts/TaskDtos.js";
+import { Task as TaskAggregate, TaskEvent as DomainTaskEvent } from "../../domain/index.js";
+import { getTaskWorkflowDefinition } from "../../domain/TaskWorkflow.js";
 import type {
-  AgentRuntimeRegistry,
   Clock,
   IdGenerator,
   TaskEventStore,
@@ -12,39 +11,36 @@ import type {
 export interface CreateTaskInput {
   title: string;
   description: string;
-  agent: AgentKind;
+  workflowId: string;
 }
 
 export class CreateTaskService {
   readonly #taskRepository: TaskRepository;
   readonly #taskEventStore: TaskEventStore;
-  readonly #agentRuntimeRegistry: AgentRuntimeRegistry;
   readonly #clock: Clock;
   readonly #idGenerator: IdGenerator;
 
   constructor(deps: {
     taskRepository: TaskRepository;
     taskEventStore: TaskEventStore;
-    agentRuntimeRegistry: AgentRuntimeRegistry;
     clock: Clock;
     idGenerator: IdGenerator;
   }) {
     this.#taskRepository = deps.taskRepository;
     this.#taskEventStore = deps.taskEventStore;
-    this.#agentRuntimeRegistry = deps.agentRuntimeRegistry;
     this.#clock = deps.clock;
     this.#idGenerator = deps.idGenerator;
   }
 
   async execute(input: CreateTaskInput) {
-    this.#agentRuntimeRegistry.assertSupported(input.agent);
+    getTaskWorkflowDefinition(input.workflowId);
 
     const now = this.#clock.now();
     const task = TaskAggregate.createDraft({
       id: this.#idGenerator.next("task"),
       title: input.title,
       description: input.description,
-      agent: input.agent,
+      workflowId: input.workflowId,
       createdAt: now
     });
 
@@ -61,4 +57,3 @@ export class CreateTaskService {
     return toTaskDetailDto(task);
   }
 }
-

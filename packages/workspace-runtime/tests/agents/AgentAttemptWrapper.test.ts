@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -27,11 +27,11 @@ function createWrapperLikeTargetScript(scriptPath: string): void {
     [
       "const [mode] = process.argv.slice(2);",
       "if (mode === 'success') {",
-      "  console.log('TASKS_DISPATCHER_STAGE:plan');",
+      "  console.log('TASKS_DISPATCHER_RESULT:{\"status\":\"completed\",\"finishedAt\":\"2026-03-29T00:00:00.000Z\"}');",
       "  console.log('done');",
       "  process.exit(0);",
       "} else if (mode === 'abortable') {",
-      "  console.log('TASKS_DISPATCHER_STAGE:plan');",
+      "  console.log('waiting');",
       "  setInterval(() => {}, 1000);",
       "} else {",
       "  process.exit(1);",
@@ -93,6 +93,7 @@ describe("AgentAttemptWrapper", () => {
       workspaceRoot,
       taskId: "task-1",
       attemptId: "attempt-1",
+      stepKey: "plan",
       resultPaths: { finalPath, tempPath },
       abortSignalPath: join(workspaceRoot, "abort", "task-1", "attempt-1.abort"),
       target: {
@@ -102,14 +103,16 @@ describe("AgentAttemptWrapper", () => {
     });
 
     expect(outcome.code).toBe(0);
-    expect(outcome.stdout).toContain("TASKS_DISPATCHER_STAGE:plan");
+    expect(outcome.stdout).toContain("done");
     expect(
       AttemptResultFileStore.readFromPath(finalPath, {
         taskId: "task-1",
-        attemptId: "attempt-1"
+        attemptId: "attempt-1",
+        stepKey: "plan"
       })
     ).toMatchObject({
-      status: "completed"
+      status: "completed",
+      stepKey: "plan"
     });
   });
 
@@ -129,6 +132,7 @@ describe("AgentAttemptWrapper", () => {
       workspaceRoot,
       taskId: "task-1",
       attemptId: "attempt-1",
+      stepKey: "plan",
       resultPaths: {
         finalPath: join(workspaceRoot, "results", "task-1", "attempt-1.json"),
         tempPath: join(workspaceRoot, "results", "task-1", "attempt-1.tmp.json")

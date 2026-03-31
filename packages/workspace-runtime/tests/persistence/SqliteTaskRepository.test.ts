@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { Task } from "@tasks-dispatcher/core";
+import { DEFAULT_WORKFLOW_ID, Task } from "@tasks-dispatcher/core";
 import { SqliteTaskRepository, WorkspaceStorage } from "../../src/index.js";
 
 const tempDirectories: string[] = [];
@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 describe("SqliteTaskRepository", () => {
-  it("saves and reloads tasks with attempts", async () => {
+  it("saves and reloads tasks with queued attempts and step records", async () => {
     const workspaceRoot = createWorkspaceRoot();
     const storage = WorkspaceStorage.open(workspaceRoot);
     const repository = new SqliteTaskRepository(storage.database);
@@ -29,7 +29,7 @@ describe("SqliteTaskRepository", () => {
       id: "task-1",
       title: "Implement persistence",
       description: "Store task state in sqlite",
-      agent: "codex-cli",
+      workflowId: DEFAULT_WORKFLOW_ID,
       createdAt: new Date("2026-03-29T00:00:00.000Z")
     });
 
@@ -48,10 +48,15 @@ describe("SqliteTaskRepository", () => {
 
       expect(reloadedTask?.toSnapshot()).toMatchObject({
         id: "task-1",
-        state: "pending_execution",
+        state: "ready",
         currentAttemptId: "attempt-1"
       });
-      expect(reloadedTask?.toSnapshot().attempts).toHaveLength(1);
+      expect(reloadedTask?.toSnapshot().attempts[0]).toMatchObject({
+        status: "queued",
+        workflowId: DEFAULT_WORKFLOW_ID,
+        currentStepKey: null
+      });
+      expect(reloadedTask?.toSnapshot().attempts[0].steps).toHaveLength(3);
 
       reopenedStorage.close();
     } finally {
@@ -73,7 +78,7 @@ describe("SqliteTaskRepository", () => {
           id: "task-a",
           title: "Only in A",
           description: "A workspace task",
-          agent: "claude-code",
+          workflowId: DEFAULT_WORKFLOW_ID,
           createdAt: new Date("2026-03-29T00:00:00.000Z")
         })
       );
@@ -96,7 +101,7 @@ describe("SqliteTaskRepository", () => {
       id: "task-failure",
       title: "Protocol failure",
       description: "Persist protocol failure attempts",
-      agent: "codex-cli",
+      workflowId: DEFAULT_WORKFLOW_ID,
       createdAt: new Date("2026-03-29T00:00:00.000Z")
     });
 
@@ -117,6 +122,10 @@ describe("SqliteTaskRepository", () => {
       expect(reloadedTask?.toSnapshot().attempts.at(-1)).toMatchObject({
         status: "failed",
         terminationReason: "protocol_failure"
+      });
+      expect(reloadedTask?.toSnapshot().attempts.at(-1)?.steps[0]).toMatchObject({
+        status: "failed",
+        failureReason: "protocol_failure"
       });
     } finally {
       storage.close();

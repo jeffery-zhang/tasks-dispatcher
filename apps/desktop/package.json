@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@tasks-dispatcher/core": "workspace:*",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },

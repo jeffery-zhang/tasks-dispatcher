@@ -9,6 +9,7 @@ import {
 } from "../../src/application/index.js";
 import { Task } from "../../src/domain/Task.js";
 import { TaskEvent } from "../../src/domain/TaskEvent.js";
+import { DEFAULT_WORKFLOW_ID } from "../../src/domain/TaskWorkflow.js";
 import type {
   AgentRuntimeRegistry,
   Clock,
@@ -61,7 +62,7 @@ class IncrementingIdGenerator implements IdGenerator {
 }
 
 class SupportedAgentRegistry implements AgentRuntimeRegistry {
-  assertSupported(): void {}
+  assertSupportedAgents(): void {}
 }
 
 function createServiceDependencies() {
@@ -75,25 +76,25 @@ function createServiceDependencies() {
 }
 
 describe("task lifecycle application services", () => {
-  it("creates a draft task with the default workflow", async () => {
+  it("creates a draft task with the selected workflow", async () => {
     const deps = createServiceDependencies();
     const createTaskService = new CreateTaskService(deps);
 
     const task = await createTaskService.execute({
       title: "Build agent board",
       description: "Scaffold the system",
-      agent: "codex-cli"
+      workflowId: DEFAULT_WORKFLOW_ID
     });
 
     expect(task).toMatchObject({
-      state: "initializing",
-      workflowId: "default-plan-develop-self-check",
-      workflowLabel: "Default Plan / Develop / Self-check"
+      state: "draft",
+      workflowId: DEFAULT_WORKFLOW_ID,
+      workflowLabel: "Default Plan / Work / Review"
     });
     expect(deps.taskEventStore.events).toHaveLength(1);
   });
 
-  it("queues a draft task into pending execution with a new attempt", async () => {
+  it("queues a draft task into ready with a new queued attempt", async () => {
     const deps = createServiceDependencies();
     const createTaskService = new CreateTaskService(deps);
     const queueTaskService = new QueueTaskService(deps);
@@ -101,19 +102,25 @@ describe("task lifecycle application services", () => {
     const createdTask = await createTaskService.execute({
       title: "Fix bug",
       description: "Debug something",
-      agent: "claude-code"
+      workflowId: DEFAULT_WORKFLOW_ID
     });
     const queuedTask = await queueTaskService.execute(createdTask.id);
 
     expect(queuedTask).toMatchObject({
       id: createdTask.id,
-      state: "pending_execution"
+      state: "ready"
     });
     expect(queuedTask.attempts).toHaveLength(1);
     expect(queuedTask.attempts[0]).toMatchObject({
       status: "queued",
-      stage: "plan"
+      workflowId: DEFAULT_WORKFLOW_ID,
+      currentStepKey: null
     });
+    expect(queuedTask.attempts[0].steps.map((step) => step.status)).toEqual([
+      "pending",
+      "pending",
+      "pending"
+    ]);
   });
 
   it("reopens a failed task and allows it to be queued again with a fresh attempt", async () => {
@@ -125,7 +132,7 @@ describe("task lifecycle application services", () => {
     const createdTask = await createTaskService.execute({
       title: "Implement feature",
       description: "Add lifecycle core",
-      agent: "codex-cli"
+      workflowId: DEFAULT_WORKFLOW_ID
     });
 
     const task = await deps.taskRepository.getById(createdTask.id);
@@ -142,12 +149,12 @@ describe("task lifecycle application services", () => {
     const reopenedTask = await reopenTaskService.execute(createdTask.id);
     const requeuedTask = await queueTaskService.execute(createdTask.id);
 
-    expect(reopenedTask.state).toBe("reopened");
-    expect(requeuedTask.state).toBe("pending_execution");
+    expect(reopenedTask.state).toBe("draft");
+    expect(requeuedTask.state).toBe("ready");
     expect(requeuedTask.attempts).toHaveLength(2);
   });
 
-  it("archives validated tasks and aborts executing tasks into execution_failed", async () => {
+  it("archives completed tasks and aborts executing tasks into failed", async () => {
     const deps = createServiceDependencies();
     const createTaskService = new CreateTaskService(deps);
     const queueTaskService = new QueueTaskService(deps);
@@ -157,7 +164,7 @@ describe("task lifecycle application services", () => {
     const createdTask = await createTaskService.execute({
       title: "Ship feature",
       description: "Move task through lifecycle",
-      agent: "claude-code"
+      workflowId: DEFAULT_WORKFLOW_ID
     });
 
     const task = await deps.taskRepository.getById(createdTask.id);
@@ -168,9 +175,12 @@ describe("task lifecycle application services", () => {
 
     await queueTaskService.execute(createdTask.id);
     task.markExecuting(deps.clock.now());
-    task.moveCurrentAttemptToStage("develop", deps.clock.now());
-    task.moveCurrentAttemptToStage("self_check", deps.clock.now());
-    task.markAwaitingValidation(deps.clock.now());
+    task.completeCurrentAttemptStep("plan", deps.clock.now());
+    task.startCurrentAttemptStep("work", deps.clock.now());
+    task.completeCurrentAttemptStep("work", deps.clock.now());
+    task.startCurrentAttemptStep("review", deps.clock.now());
+    task.completeCurrentAttemptStep("review", deps.clock.now());
+    task.markCompleted(deps.clock.now());
     await deps.taskRepository.save(task);
 
     const archivedTask = await archiveTaskService.execute(createdTask.id);
@@ -180,7 +190,7 @@ describe("task lifecycle application services", () => {
     const createdTaskTwo = await createTaskService.execute({
       title: "Abort run",
       description: "Manual stop path",
-      agent: "codex-cli"
+      workflowId: DEFAULT_WORKFLOW_ID
     });
 
     await queueTaskService.execute(createdTaskTwo.id);
@@ -195,7 +205,7 @@ describe("task lifecycle application services", () => {
 
     const abortedTask = await abortTaskService.execute(createdTaskTwo.id);
 
-    expect(abortedTask.state).toBe("execution_failed");
+    expect(abortedTask.state).toBe("failed");
     expect(abortedTask.attempts.at(-1)?.terminationReason).toBe(
       "manually_aborted"
     );
@@ -209,12 +219,12 @@ describe("task lifecycle application services", () => {
     await createTaskService.execute({
       title: "Older task",
       description: "First",
-      agent: "codex-cli"
+      workflowId: DEFAULT_WORKFLOW_ID
     });
     await createTaskService.execute({
       title: "Newer task",
       description: "Second",
-      agent: "claude-code"
+      workflowId: DEFAULT_WORKFLOW_ID
     });
 
     const board = await getTaskBoardService.execute();

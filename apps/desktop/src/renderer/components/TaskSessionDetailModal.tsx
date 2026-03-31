@@ -38,8 +38,10 @@ export function TaskSessionDetailModal({
             <p className="mt-2 text-sm text-base-content/70">{attempt.status}</p>
           </article>
           <article className="rounded-box border border-base-300 bg-base-200/40 p-4">
-            <h3 className="font-semibold">Stage</h3>
-            <p className="mt-2 text-sm text-base-content/70">{attempt.stage}</p>
+            <h3 className="font-semibold">Current Step</h3>
+            <p className="mt-2 text-sm text-base-content/70">
+              {attempt.currentStepKey ?? "n/a"}
+            </p>
           </article>
           <article className="rounded-box border border-base-300 bg-base-200/40 p-4">
             <h3 className="font-semibold">Termination</h3>
@@ -48,6 +50,23 @@ export function TaskSessionDetailModal({
             </p>
           </article>
         </div>
+
+        <section className="rounded-box border border-base-300 bg-base-200/40 p-4">
+          <h3 className="font-semibold">Steps</h3>
+          <div className="mt-3 space-y-2 text-sm text-base-content/70">
+            {attempt.steps.map((step) => (
+              <div key={step.key} className="flex items-center justify-between gap-4">
+                <span>
+                  {step.name} ({step.agent})
+                </span>
+                <span>
+                  {step.status}
+                  {step.failureReason ? ` / ${step.failureReason}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
 
         <section className="rounded-box border border-base-300 bg-base-100">
           <div className="flex items-center justify-between border-b border-base-300 px-4 py-3">

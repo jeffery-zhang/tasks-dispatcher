@@ -8,21 +8,38 @@ function createTask(attemptCount = 0): TaskDetailDto {
     id: "task-1",
     title: "Review runtime sync",
     description: "Inspect the task detail modal.",
-    agent: "codex-cli",
-    state: "pending_validation",
-    workflowId: "default-plan-develop-self-check",
-    workflowLabel: "Default Plan / Develop / Self-check",
+    state: "completed",
+    workflowId: "default-plan-work-review",
+    workflowLabel: "Default Plan / Work / Review",
     createdAt: "2026-03-29T00:00:00.000Z",
     updatedAt: "2026-03-29T00:00:00.000Z",
     currentAttemptId: attemptCount > 0 ? "attempt-1" : null,
+    currentStepKey: null,
+    currentStepStatus: null,
+    currentStepAgent: null,
     attempts:
       attemptCount > 0
         ? [
             {
               id: "attempt-1",
               status: "completed",
-              stage: "self_check",
-              terminationReason: null
+              workflowId: "default-plan-work-review",
+              workflowLabel: "Default Plan / Work / Review",
+              currentStepKey: null,
+              startedAt: "2026-03-29T00:01:00.000Z",
+              finishedAt: "2026-03-29T00:05:00.000Z",
+              terminationReason: null,
+              steps: [
+                {
+                  key: "plan",
+                  name: "plan",
+                  agent: "claude-code",
+                  prompt: "plan",
+                  status: "completed",
+                  finishedAt: "2026-03-29T00:02:00.000Z",
+                  failureReason: null
+                }
+              ]
             }
           ]
         : []
@@ -45,7 +62,7 @@ describe("TaskDetailModal", () => {
     );
 
     expect(markup).toContain("No session history yet");
-    expect(markup).toContain("Default Plan / Develop / Self-check");
+    expect(markup).toContain("Default Plan / Work / Review");
   });
 
   it("renders a session list when attempts exist", () => {

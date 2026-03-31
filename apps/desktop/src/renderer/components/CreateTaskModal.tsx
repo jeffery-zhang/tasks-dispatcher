@@ -1,6 +1,9 @@
 import { startTransition, useState } from "react";
-import type { AgentKind } from "@tasks-dispatcher/core";
-import type { CreateRuntimeTaskInput } from "@tasks-dispatcher/core/contracts";
+import {
+  DEFAULT_TASK_WORKFLOW_OPTION,
+  TASK_WORKFLOW_OPTIONS,
+  type CreateRuntimeTaskInput
+} from "@tasks-dispatcher/core/contracts";
 import { OverlayModal } from "./OverlayModal.js";
 
 interface CreateTaskModalProps {
@@ -16,7 +19,9 @@ export function CreateTaskModal({
 }: CreateTaskModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [agent, setAgent] = useState<AgentKind>("codex-cli");
+  const [workflowId, setWorkflowId] = useState<string>(
+    DEFAULT_TASK_WORKFLOW_OPTION.id
+  );
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -24,11 +29,11 @@ export function CreateTaskModal({
     setSubmitting(true);
 
     try {
-      await onCreate({ title, description, agent });
+      await onCreate({ title, description, workflowId });
       startTransition(() => {
         setTitle("");
         setDescription("");
-        setAgent("codex-cli");
+        setWorkflowId(DEFAULT_TASK_WORKFLOW_OPTION.id);
       });
       onClose();
     } finally {
@@ -40,7 +45,7 @@ export function CreateTaskModal({
     <OverlayModal onClose={onClose} open={open} title="Add Task">
       <form className="space-y-4" onSubmit={handleSubmit}>
         <div className="rounded-box border border-base-300 bg-base-200/40 p-4 text-sm text-base-content/65">
-          Default workflow: <span className="font-medium">Plan / Develop / Self-check</span>
+          Current workflow catalog is fixed, but selection is still explicit.
         </div>
 
         <label className="form-control gap-2">
@@ -59,21 +64,24 @@ export function CreateTaskModal({
           <textarea
             className="textarea textarea-bordered min-h-32"
             onChange={(event) => setDescription(event.target.value)}
-            placeholder="Describe the task for the selected agent."
+            placeholder="Describe the task for the selected workflow."
             required
             value={description}
           />
         </label>
 
         <label className="form-control gap-2">
-          <span className="label-text font-medium">Agent</span>
+          <span className="label-text font-medium">Workflow</span>
           <select
             className="select select-bordered"
-            onChange={(event) => setAgent(event.target.value as AgentKind)}
-            value={agent}
+            onChange={(event) => setWorkflowId(event.target.value)}
+            value={workflowId}
           >
-            <option value="codex-cli">Codex CLI</option>
-            <option value="claude-code">Claude Code</option>
+            {TASK_WORKFLOW_OPTIONS.map((workflow) => (
+              <option key={workflow.id} value={workflow.id}>
+                {workflow.label}
+              </option>
+            ))}
           </select>
         </label>
 

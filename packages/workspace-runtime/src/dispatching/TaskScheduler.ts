@@ -29,7 +29,7 @@ export class TaskScheduler {
       while (this.#concurrencyGate.hasCapacity) {
         const tasks = await this.#taskRepository.list();
         const nextTask = tasks
-          .filter((task) => task.state === "pending_execution")
+          .filter((task) => task.state === "ready")
           .sort((left, right) =>
             left.toSnapshot().updatedAt.localeCompare(right.toSnapshot().updatedAt)
           )[0];
@@ -45,4 +45,3 @@ export class TaskScheduler {
     }
   }
 }
-

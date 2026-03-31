@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   CreateTaskService,
+  DEFAULT_WORKFLOW_ID,
   QueueTaskService,
   type Clock,
   type IdGenerator
@@ -41,30 +42,19 @@ function writeWrapperLikeScript(scriptPath: string): void {
   writeFileSync(
     scriptPath,
     [
-      "import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';",
-      "import { dirname } from 'node:path';",
-      "const [mode, finalPath, tempPath, taskId, attemptId] = process.argv.slice(2);",
-      "const writeResult = () => {",
-      "  mkdirSync(dirname(finalPath), { recursive: true });",
-      "  rmSync(finalPath, { force: true });",
-      "  writeFileSync(tempPath, JSON.stringify({ schemaVersion: 1, status: 'completed', taskId, attemptId, finishedAt: new Date().toISOString() }), 'utf8');",
-      "  renameSync(tempPath, finalPath);",
-      "};",
+      "const [mode] = process.argv.slice(2);",
       "if (mode === 'success') {",
-      "  console.log('TASKS_DISPATCHER_STAGE:plan');",
-      "  console.log('planning');",
-      "  console.log('TASKS_DISPATCHER_STAGE:develop');",
-      "  console.log('developing');",
-      "  console.log('TASKS_DISPATCHER_STAGE:self_check');",
-      "  console.log('checking');",
-      "  writeResult();",
+      "  console.log('TASKS_DISPATCHER_RESULT:{\"status\":\"completed\",\"finishedAt\":\"2026-03-29T00:00:00.000Z\"}');",
+      "  console.log('step complete');",
       "  process.exit(0);",
       "} else if (mode === 'protocol-missing') {",
-      "  console.log('TASKS_DISPATCHER_STAGE:plan');",
       "  console.log('planning only');",
       "  process.exit(0);",
+      "} else if (mode === 'needs-input') {",
+      "  console.log('TASKS_DISPATCHER_RESULT:{\"status\":\"failed\",\"failureReason\":\"needs_input\",\"finishedAt\":\"2026-03-29T00:00:00.000Z\"}');",
+      "  process.exit(0);",
       "} else if (mode === 'abortable') {",
-      "  console.log('TASKS_DISPATCHER_STAGE:plan');",
+      "  console.log('running');",
       "  setInterval(() => {}, 1000);",
       "} else {",
       "  process.exit(1);",
@@ -120,40 +110,32 @@ function createRuntimeRegistry(scriptPath: string, mode: string) {
     {
       kind: "codex-cli",
       createLaunchSpec(_task, context) {
-        return {
-          command: process.execPath,
-          args: [
-            scriptPath,
-            mode,
-            context.resultPaths.finalPath,
-            context.resultPaths.tempPath,
-            context.taskId,
-            context.attemptId
-          ]
-        };
+        return createAgentAttemptWrapperLaunchSpec(
+          {
+            command: process.execPath,
+            args: [scriptPath, mode]
+          },
+          context
+        );
       }
     },
     {
       kind: "claude-code",
       createLaunchSpec(_task, context) {
-        return {
-          command: process.execPath,
-          args: [
-            scriptPath,
-            mode,
-            context.resultPaths.finalPath,
-            context.resultPaths.tempPath,
-            context.taskId,
-            context.attemptId
-          ]
-        };
+        return createAgentAttemptWrapperLaunchSpec(
+          {
+            command: process.execPath,
+            args: [scriptPath, mode]
+          },
+          context
+        );
       }
     }
   ]);
 }
 
 describe("ExecutionCoordinator", () => {
-  it("marks queued tasks pending_validation only when exit 0 includes a valid result artifact", async () => {
+  it("marks ready tasks completed only when each step writes a valid result artifact", async () => {
     const workspaceRoot = createWorkspaceRoot();
     const storage = WorkspaceStorage.open(workspaceRoot);
     const repository = new SqliteTaskRepository(storage.database);
@@ -192,13 +174,13 @@ describe("ExecutionCoordinator", () => {
     const createTaskService = new CreateTaskService({
       taskRepository: repository,
       taskEventStore,
-      agentRuntimeRegistry,
       clock,
       idGenerator
     });
     const queueTaskService = new QueueTaskService({
       taskRepository: repository,
       taskEventStore,
+      agentRuntimeRegistry,
       clock,
       idGenerator
     });
@@ -207,7 +189,7 @@ describe("ExecutionCoordinator", () => {
       const createdTask = await createTaskService.execute({
         title: "Run fake task",
         description: "Exercise execution coordinator",
-        agent: "codex-cli"
+        workflowId: DEFAULT_WORKFLOW_ID
       });
 
       await queueTaskService.execute(createdTask.id);
@@ -216,20 +198,20 @@ describe("ExecutionCoordinator", () => {
       const completedTask = await waitForTaskState(
         repository,
         createdTask.id,
-        "pending_validation"
+        "completed"
       );
 
       expect(completedTask.toSnapshot().attempts.at(-1)).toMatchObject({
         status: "completed",
-        stage: "self_check",
+        currentStepKey: null,
         terminationReason: null
       });
       expect(
-        new TaskLogFileStore(storage.paths).read(
-          createdTask.id,
-          completedTask.currentAttemptId!
-        )
-      ).toContain("developing");
+        completedTask
+          .toSnapshot()
+          .attempts.at(-1)
+          ?.steps.map((step) => step.status)
+      ).toEqual(["completed", "completed", "completed"]);
     } finally {
       storage.close();
       await wait(50);
@@ -278,13 +260,13 @@ describe("ExecutionCoordinator", () => {
     const createTaskService = new CreateTaskService({
       taskRepository: repository,
       taskEventStore,
-      agentRuntimeRegistry,
       clock,
       idGenerator
     });
     const queueTaskService = new QueueTaskService({
       taskRepository: repository,
       taskEventStore,
+      agentRuntimeRegistry,
       clock,
       idGenerator
     });
@@ -293,21 +275,17 @@ describe("ExecutionCoordinator", () => {
       const createdTask = await createTaskService.execute({
         title: "Run partial marker task",
         description: "Exercise protocol failure settle",
-        agent: "codex-cli"
+        workflowId: DEFAULT_WORKFLOW_ID
       });
 
       await queueTaskService.execute(createdTask.id);
       await scheduler.kick();
 
-      const failedTask = await waitForTaskState(
-        repository,
-        createdTask.id,
-        "execution_failed"
-      );
+      const failedTask = await waitForTaskState(repository, createdTask.id, "failed");
 
       expect(failedTask.toSnapshot().attempts.at(-1)).toMatchObject({
         status: "failed",
-        stage: "plan",
+        currentStepKey: "plan",
         terminationReason: "protocol_failure"
       });
       expect(
@@ -316,6 +294,78 @@ describe("ExecutionCoordinator", () => {
           failedTask.currentAttemptId!
         )
       ).toContain("planning only");
+    } finally {
+      storage.close();
+      await wait(50);
+    }
+  });
+
+  it("marks needs_input as a first-class failed attempt reason", async () => {
+    const workspaceRoot = createWorkspaceRoot();
+    const storage = WorkspaceStorage.open(workspaceRoot);
+    const repository = new SqliteTaskRepository(storage.database);
+    const taskEventStore = new SqliteTaskEventStore(storage.database);
+    const eventBus = new LocalEventBus();
+    const clock = new FixedClock();
+    const idGenerator = new IncrementingIdGenerator();
+    const wrapperScriptPath = join(workspaceRoot, "wrapper-like-script.mjs");
+
+    writeWrapperLikeScript(wrapperScriptPath);
+
+    const agentRuntimeRegistry = createRuntimeRegistry(wrapperScriptPath, "needs-input");
+    const concurrencyGate = new ConcurrencyGate(2);
+    let scheduler: TaskScheduler;
+    const executionCoordinator = new ExecutionCoordinator({
+      workspaceRoot,
+      taskRepository: repository,
+      taskEventStore,
+      agentRuntimeRegistry,
+      childProcessRunner: new NodeChildProcessRunner(),
+      taskLogFileStore: new TaskLogFileStore(storage.paths),
+      attemptResultFileStore: new AttemptResultFileStore(storage.paths),
+      attemptAbortSignalStore: new AttemptAbortSignalStore(storage.paths),
+      eventBus,
+      clock,
+      idGenerator,
+      concurrencyGate,
+      onSettled: async () => scheduler.kick()
+    });
+    scheduler = new TaskScheduler({
+      taskRepository: repository,
+      concurrencyGate,
+      executionCoordinator
+    });
+
+    const createTaskService = new CreateTaskService({
+      taskRepository: repository,
+      taskEventStore,
+      clock,
+      idGenerator
+    });
+    const queueTaskService = new QueueTaskService({
+      taskRepository: repository,
+      taskEventStore,
+      agentRuntimeRegistry,
+      clock,
+      idGenerator
+    });
+
+    try {
+      const createdTask = await createTaskService.execute({
+        title: "Prompt asks for more input",
+        description: "Exercise needs_input settle",
+        workflowId: DEFAULT_WORKFLOW_ID
+      });
+
+      await queueTaskService.execute(createdTask.id);
+      await scheduler.kick();
+
+      const failedTask = await waitForTaskState(repository, createdTask.id, "failed");
+
+      expect(failedTask.toSnapshot().attempts.at(-1)).toMatchObject({
+        status: "failed",
+        terminationReason: "needs_input"
+      });
     } finally {
       storage.close();
       await wait(50);
@@ -341,7 +391,7 @@ describe("ExecutionCoordinator", () => {
           return createAgentAttemptWrapperLaunchSpec(
             {
               command: process.execPath,
-              args: [wrapperScriptPath, "abortable", "", "", context.taskId, context.attemptId]
+              args: [wrapperScriptPath, "abortable"]
             },
             context
           );
@@ -353,7 +403,7 @@ describe("ExecutionCoordinator", () => {
           return createAgentAttemptWrapperLaunchSpec(
             {
               command: process.execPath,
-              args: [wrapperScriptPath, "abortable", "", "", context.taskId, context.attemptId]
+              args: [wrapperScriptPath, "abortable"]
             },
             context
           );
@@ -386,13 +436,13 @@ describe("ExecutionCoordinator", () => {
     const createTaskService = new CreateTaskService({
       taskRepository: repository,
       taskEventStore,
-      agentRuntimeRegistry,
       clock,
       idGenerator
     });
     const queueTaskService = new QueueTaskService({
       taskRepository: repository,
       taskEventStore,
+      agentRuntimeRegistry,
       clock,
       idGenerator
     });
@@ -401,7 +451,7 @@ describe("ExecutionCoordinator", () => {
       const createdTask = await createTaskService.execute({
         title: "Abort wrapper task",
         description: "Exercise strong abort settle",
-        agent: "codex-cli"
+        workflowId: DEFAULT_WORKFLOW_ID
       });
 
       await queueTaskService.execute(createdTask.id);
@@ -411,7 +461,7 @@ describe("ExecutionCoordinator", () => {
 
       const abortedTask = await executionCoordinator.abortTask(createdTask.id);
 
-      expect(abortedTask.state).toBe("execution_failed");
+      expect(abortedTask.state).toBe("failed");
       expect(abortedTask.attempts.at(-1)).toMatchObject({
         status: "failed",
         terminationReason: "manually_aborted"

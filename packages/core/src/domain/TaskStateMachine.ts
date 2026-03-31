@@ -1,15 +1,8 @@
 import type { TaskState } from "./TaskState.js";
 
-const editableStates = new Set<TaskState>(["initializing", "reopened"]);
-const queueableStates = new Set<TaskState>([
-  "initializing",
-  "reopened",
-  "execution_failed"
-]);
-const reopenableStates = new Set<TaskState>([
-  "pending_validation",
-  "execution_failed"
-]);
+const editableStates = new Set<TaskState>(["draft"]);
+const queueableStates = new Set<TaskState>(["draft"]);
+const reopenableStates = new Set<TaskState>(["completed", "failed"]);
 
 export class TaskStateTransitionError extends Error {
   constructor(message: string) {
@@ -34,41 +27,37 @@ export class TaskStateMachine {
   static assertCanQueue(state: TaskState): void {
     if (!queueableStates.has(state)) {
       throw new TaskStateTransitionError(
-        `Task in state "${state}" cannot transition to pending execution.`
+        `Task in state "${state}" cannot transition to ready.`
       );
     }
   }
 
   static assertCanMarkExecuting(state: TaskState): void {
-    TaskStateMachine.assertExactState(state, "pending_execution", "executing");
+    TaskStateMachine.assertExactState(state, "ready", "executing");
   }
 
-  static assertCanAwaitValidation(state: TaskState): void {
-    TaskStateMachine.assertExactState(
-      state,
-      "executing",
-      "pending validation"
-    );
+  static assertCanComplete(state: TaskState): void {
+    TaskStateMachine.assertExactState(state, "executing", "completed");
   }
 
   static assertCanFail(state: TaskState): void {
-    TaskStateMachine.assertExactState(state, "executing", "execution failed");
+    TaskStateMachine.assertExactState(state, "executing", "failed");
   }
 
   static assertCanReopen(state: TaskState): void {
     if (!reopenableStates.has(state)) {
       throw new TaskStateTransitionError(
-        `Task in state "${state}" cannot transition to reopened.`
+        `Task in state "${state}" cannot transition to draft.`
       );
     }
   }
 
   static assertCanArchive(state: TaskState): void {
-    TaskStateMachine.assertExactState(state, "pending_validation", "archived");
+    TaskStateMachine.assertExactState(state, "completed", "archived");
   }
 
   static assertCanAbort(state: TaskState): void {
-    TaskStateMachine.assertExactState(state, "executing", "execution failed");
+    TaskStateMachine.assertExactState(state, "executing", "failed");
   }
 
   private static assertExactState(

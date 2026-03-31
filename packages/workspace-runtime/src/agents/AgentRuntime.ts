@@ -1,3 +1,4 @@
+import type { AgentKind } from "@tasks-dispatcher/core";
 import type { TaskDetailDto } from "@tasks-dispatcher/core/contracts";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -23,12 +24,13 @@ export interface AgentLaunchContext {
   workspaceRoot: string;
   taskId: string;
   attemptId: string;
+  stepKey: string;
   resultPaths: AttemptResultPaths;
   abortSignalPath: string;
 }
 
 export interface AgentRuntime {
-  readonly kind: TaskDetailDto["agent"];
+  readonly kind: AgentKind;
   createLaunchSpec(
     task: TaskDetailDto,
     context: AgentLaunchContext
@@ -51,6 +53,7 @@ export function createAgentAttemptWrapperLaunchSpec(
       workspaceRoot: context.workspaceRoot,
       taskId: context.taskId,
       attemptId: context.attemptId,
+      stepKey: context.stepKey,
       resultPaths: context.resultPaths,
       abortSignalPath: context.abortSignalPath,
       target

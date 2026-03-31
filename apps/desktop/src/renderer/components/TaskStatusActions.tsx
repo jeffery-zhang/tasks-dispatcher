@@ -17,21 +17,19 @@ export function TaskStatusActions({
 }: TaskStatusActionsProps) {
   return (
     <div className="flex flex-wrap gap-2">
-      {(state === "initializing" ||
-        state === "reopened" ||
-        state === "execution_failed") && (
+      {state === "draft" && (
         <button className="btn btn-primary btn-sm" onClick={() => void onQueue()} type="button">
           Queue
         </button>
       )}
 
-      {(state === "pending_validation" || state === "execution_failed") && (
+      {(state === "completed" || state === "failed") && (
         <button className="btn btn-secondary btn-sm" onClick={() => void onReopen()} type="button">
           Reopen
         </button>
       )}
 
-      {state === "pending_validation" && (
+      {state === "completed" && (
         <button className="btn btn-success btn-sm" onClick={() => void onArchive()} type="button">
           Archive
         </button>

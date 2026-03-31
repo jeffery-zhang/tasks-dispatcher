@@ -2,9 +2,9 @@ export const TASK_EVENT_TYPES = [
   "task_created",
   "task_queued",
   "execution_started",
-  "execution_stage_changed",
+  "execution_step_changed",
   "execution_failed",
-  "validation_requested",
+  "task_completed",
   "task_reopened",
   "task_archived",
   "task_aborted"

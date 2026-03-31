@@ -1,11 +1,29 @@
-import type { AgentKind } from "../domain/AgentKind.js";
 import type { TaskDetailDto, TaskSummaryDto } from "./TaskDtos.js";
+
+import {
+  DEFAULT_WORKFLOW_ID,
+  DEFAULT_WORKFLOW_LABEL
+} from "../domain/TaskWorkflow.js";
 
 export interface CreateRuntimeTaskInput {
   title: string;
   description: string;
-  agent: AgentKind;
+  workflowId: string;
 }
+
+export interface TaskWorkflowOptionDto {
+  id: string;
+  label: string;
+}
+
+export const DEFAULT_TASK_WORKFLOW_OPTION = {
+  id: DEFAULT_WORKFLOW_ID,
+  label: DEFAULT_WORKFLOW_LABEL
+} as const satisfies TaskWorkflowOptionDto;
+
+export const TASK_WORKFLOW_OPTIONS = [
+  DEFAULT_TASK_WORKFLOW_OPTION
+] as const satisfies readonly TaskWorkflowOptionDto[];
 
 export interface WorkspaceRuntimeEvent {
   type: "task.updated" | "task.log";

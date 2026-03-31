@@ -8,11 +8,15 @@ const task: TaskSummaryDto = {
   title: "Implement grouped board",
   description:
     "This is a long description that should still render inside the task card and be clipped by the card container rather than expanded in full.",
-  state: "initializing",
-  agent: "codex-cli",
+  state: "draft",
+  workflowId: "default-plan-work-review",
+  workflowLabel: "Default Plan / Work / Review",
   updatedAt: "2026-03-29T00:00:00.000Z",
   currentAttemptId: null,
-  currentAttemptTerminationReason: null
+  currentAttemptTerminationReason: null,
+  currentStepKey: null,
+  currentStepStatus: null,
+  currentStepAgent: null
 };
 
 describe("TaskCard", () => {
@@ -31,7 +35,7 @@ describe("TaskCard", () => {
     expect(markup).toContain("Implement grouped board");
     expect(markup).toContain("Details");
     expect(markup).toContain("Queue");
-    expect(markup).toContain("initializing");
+    expect(markup).toContain("draft");
   });
 
   it("renders a failure hint on failed cards", () => {
@@ -39,7 +43,7 @@ describe("TaskCard", () => {
       <TaskCard
         task={{
           ...task,
-          state: "execution_failed",
+          state: "failed",
           currentAttemptId: "attempt-1",
           currentAttemptTerminationReason: "protocol_failure"
         }}

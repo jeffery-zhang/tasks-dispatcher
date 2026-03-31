@@ -8,22 +8,24 @@ function createTask(state: TaskDetailDto["state"]): TaskDetailDto {
     id: "task-1",
     title: "Test task",
     description: "Testing buttons",
-    agent: "codex-cli",
     state,
-    workflowId: "default-plan-develop-self-check",
-    workflowLabel: "Default Plan / Develop / Self-check",
+    workflowId: "default-plan-work-review",
+    workflowLabel: "Default Plan / Work / Review",
     createdAt: "2026-03-29T00:00:00.000Z",
     updatedAt: "2026-03-29T00:00:00.000Z",
     currentAttemptId: null,
+    currentStepKey: null,
+    currentStepStatus: null,
+    currentStepAgent: null,
     attempts: []
   };
 }
 
 describe("TaskStatusActions", () => {
-  it("shows queue and reopen actions for failed tasks", () => {
+  it("shows only reopen for failed tasks", () => {
     const markup = renderToStaticMarkup(
       <TaskStatusActions
-        state={createTask("execution_failed").state}
+        state={createTask("failed").state}
         onQueue={vi.fn()}
         onReopen={vi.fn()}
         onArchive={vi.fn()}
@@ -31,15 +33,14 @@ describe("TaskStatusActions", () => {
       />
     );
 
-    expect(markup).toContain("Queue");
     expect(markup).toContain("Reopen");
     expect(markup).not.toContain("Archive");
   });
 
-  it("shows only archive and reopen for validation tasks", () => {
+  it("shows archive and reopen for completed tasks", () => {
     const markup = renderToStaticMarkup(
       <TaskStatusActions
-        state={createTask("pending_validation").state}
+        state={createTask("completed").state}
         onQueue={vi.fn()}
         onReopen={vi.fn()}
         onArchive={vi.fn()}

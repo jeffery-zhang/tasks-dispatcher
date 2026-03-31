@@ -2,7 +2,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   description TEXT NOT NULL,
-  agent TEXT NOT NULL,
   workflow_id TEXT NOT NULL,
   workflow_label TEXT NOT NULL,
   state TEXT NOT NULL,
@@ -14,9 +13,11 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS task_attempts (
   id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL,
-  agent TEXT NOT NULL,
+  workflow_id TEXT NOT NULL,
+  workflow_label TEXT NOT NULL,
   status TEXT NOT NULL,
-  stage TEXT NOT NULL,
+  current_step_key TEXT,
+  steps_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT,
@@ -43,4 +44,3 @@ CREATE TABLE IF NOT EXISTS workspace_session (
   workspace_path TEXT NOT NULL,
   opened_at TEXT NOT NULL
 );
-

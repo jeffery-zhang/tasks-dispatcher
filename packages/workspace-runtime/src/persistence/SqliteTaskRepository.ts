@@ -1,7 +1,7 @@
 import { Task } from "@tasks-dispatcher/core";
 import type { TaskRepository } from "@tasks-dispatcher/core";
 import type { TaskSnapshot } from "@tasks-dispatcher/core";
-import type { TaskAttemptSnapshot } from "@tasks-dispatcher/core";
+import type { TaskAttemptSnapshot, TaskAttemptStepSnapshot } from "@tasks-dispatcher/core";
 import type { DatabaseSync } from "node:sqlite";
 
 function mapTaskRow(row: Record<string, unknown>): Omit<TaskSnapshot, "attempts"> {
@@ -9,7 +9,6 @@ function mapTaskRow(row: Record<string, unknown>): Omit<TaskSnapshot, "attempts"
     id: String(row.id),
     title: String(row.title),
     description: String(row.description),
-    agent: row.agent as TaskSnapshot["agent"],
     workflowId: String(row.workflow_id),
     workflowLabel: String(row.workflow_label),
     state: row.state as TaskSnapshot["state"],
@@ -19,13 +18,33 @@ function mapTaskRow(row: Record<string, unknown>): Omit<TaskSnapshot, "attempts"
   };
 }
 
+function parseAttemptSteps(row: Record<string, unknown>): TaskAttemptStepSnapshot[] {
+  const rawSteps = row.steps_json;
+
+  if (typeof rawSteps !== "string") {
+    throw new Error("Attempt row is missing steps_json.");
+  }
+
+  const parsed = JSON.parse(rawSteps) as unknown;
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("Attempt steps_json is not an array.");
+  }
+
+  return parsed as TaskAttemptStepSnapshot[];
+}
+
 function mapAttemptRow(row: Record<string, unknown>): TaskAttemptSnapshot {
   return {
     id: String(row.id),
     taskId: String(row.task_id),
-    agent: row.agent as TaskAttemptSnapshot["agent"],
     status: row.status as TaskAttemptSnapshot["status"],
-    stage: row.stage as TaskAttemptSnapshot["stage"],
+    workflowId: String(row.workflow_id),
+    workflowLabel: String(row.workflow_label),
+    currentStepKey: row.current_step_key
+      ? (String(row.current_step_key) as TaskAttemptSnapshot["currentStepKey"])
+      : null,
+    steps: parseAttemptSteps(row),
     createdAt: String(row.created_at),
     startedAt: row.started_at ? String(row.started_at) : null,
     finishedAt: row.finished_at ? String(row.finished_at) : null,
@@ -85,7 +104,6 @@ export class SqliteTaskRepository implements TaskRepository {
       id: snapshot.id,
       title: snapshot.title,
       description: snapshot.description,
-      agent: snapshot.agent,
       workflowId: snapshot.workflowId,
       workflowLabel: snapshot.workflowLabel,
       state: snapshot.state,
@@ -95,14 +113,13 @@ export class SqliteTaskRepository implements TaskRepository {
     } satisfies Record<string, string | null>;
     const upsertTask = this.#database.prepare(`
       INSERT INTO tasks (
-        id, title, description, agent, workflow_id, workflow_label, state, created_at, updated_at, current_attempt_id
+        id, title, description, workflow_id, workflow_label, state, created_at, updated_at, current_attempt_id
       ) VALUES (
-        @id, @title, @description, @agent, @workflowId, @workflowLabel, @state, @createdAt, @updatedAt, @currentAttemptId
+        @id, @title, @description, @workflowId, @workflowLabel, @state, @createdAt, @updatedAt, @currentAttemptId
       )
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
         description = excluded.description,
-        agent = excluded.agent,
         workflow_id = excluded.workflow_id,
         workflow_label = excluded.workflow_label,
         state = excluded.state,
@@ -115,9 +132,9 @@ export class SqliteTaskRepository implements TaskRepository {
     );
     const insertAttempt = this.#database.prepare(`
       INSERT INTO task_attempts (
-        id, task_id, agent, status, stage, created_at, started_at, finished_at, termination_reason
+        id, task_id, workflow_id, workflow_label, status, current_step_key, steps_json, created_at, started_at, finished_at, termination_reason
       ) VALUES (
-        @id, @taskId, @agent, @status, @stage, @createdAt, @startedAt, @finishedAt, @terminationReason
+        @id, @taskId, @workflowId, @workflowLabel, @status, @currentStepKey, @stepsJson, @createdAt, @startedAt, @finishedAt, @terminationReason
       )
     `);
 
@@ -131,9 +148,11 @@ export class SqliteTaskRepository implements TaskRepository {
         insertAttempt.run({
           id: attempt.id,
           taskId: attempt.taskId,
-          agent: attempt.agent,
+          workflowId: attempt.workflowId,
+          workflowLabel: attempt.workflowLabel,
           status: attempt.status,
-          stage: attempt.stage,
+          currentStepKey: attempt.currentStepKey,
+          stepsJson: JSON.stringify(attempt.steps),
           createdAt: attempt.createdAt,
           startedAt: attempt.startedAt,
           finishedAt: attempt.finishedAt,

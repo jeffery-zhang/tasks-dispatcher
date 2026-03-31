@@ -1,18 +1,23 @@
 import { startTransition, useState } from "react";
-import type { AgentKind } from "@tasks-dispatcher/core";
+import {
+  DEFAULT_TASK_WORKFLOW_OPTION,
+  TASK_WORKFLOW_OPTIONS
+} from "@tasks-dispatcher/core/contracts";
 
 interface TaskComposerProps {
   onCreate: (input: {
     title: string;
     description: string;
-    agent: AgentKind;
+    workflowId: string;
   }) => Promise<void>;
 }
 
 export function TaskComposer({ onCreate }: TaskComposerProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [agent, setAgent] = useState<AgentKind>("codex-cli");
+  const [workflowId, setWorkflowId] = useState<string>(
+    DEFAULT_TASK_WORKFLOW_OPTION.id
+  );
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -20,11 +25,11 @@ export function TaskComposer({ onCreate }: TaskComposerProps) {
     setSubmitting(true);
 
     try {
-      await onCreate({ title, description, agent });
+      await onCreate({ title, description, workflowId });
       startTransition(() => {
         setTitle("");
         setDescription("");
-        setAgent("codex-cli");
+        setWorkflowId(DEFAULT_TASK_WORKFLOW_OPTION.id);
       });
     } finally {
       setSubmitting(false);
@@ -38,11 +43,11 @@ export function TaskComposer({ onCreate }: TaskComposerProps) {
           <div>
             <h2 className="text-lg font-bold">Create Task</h2>
             <p className="text-sm text-base-content/60">
-              New tasks stay in draft (`初始化`) until you explicitly queue them.
+              New tasks stay in draft until you explicitly queue them.
             </p>
           </div>
           <div className="badge badge-outline badge-secondary">
-            Default Plan / Develop / Self-check
+            {DEFAULT_TASK_WORKFLOW_OPTION.label}
           </div>
         </div>
 
@@ -63,20 +68,23 @@ export function TaskComposer({ onCreate }: TaskComposerProps) {
             className="textarea textarea-bordered min-h-28"
             value={description}
             onChange={(event) => setDescription(event.target.value)}
-            placeholder="Describe the task for the selected agent."
+            placeholder="Describe the task for the selected workflow."
             required
           />
         </label>
 
         <label className="form-control gap-2">
-          <span className="label-text font-medium">Agent</span>
+          <span className="label-text font-medium">Workflow</span>
           <select
             className="select select-bordered"
-            value={agent}
-            onChange={(event) => setAgent(event.target.value as AgentKind)}
+            value={workflowId}
+            onChange={(event) => setWorkflowId(event.target.value)}
           >
-            <option value="codex-cli">Codex CLI</option>
-            <option value="claude-code">Claude Code</option>
+            {TASK_WORKFLOW_OPTIONS.map((workflow) => (
+              <option key={workflow.id} value={workflow.id}>
+                {workflow.label}
+              </option>
+            ))}
           </select>
         </label>
 
@@ -89,4 +97,3 @@ export function TaskComposer({ onCreate }: TaskComposerProps) {
     </form>
   );
 }
-

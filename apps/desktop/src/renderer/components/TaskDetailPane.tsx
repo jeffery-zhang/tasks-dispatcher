@@ -44,9 +44,11 @@ export function TaskDetailPane({
           </div>
           <div className="space-y-2 text-right">
             <div className="badge badge-outline badge-primary">{task.state}</div>
-            <div className="text-xs uppercase tracking-[0.14em] text-base-content/50">
-              {task.agent}
-            </div>
+            {task.currentStepAgent ? (
+              <div className="text-xs uppercase tracking-[0.14em] text-base-content/50">
+                {task.currentStepAgent}
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -69,7 +71,7 @@ export function TaskDetailPane({
               <div className="mt-2 space-y-1 text-sm text-base-content/70">
                 <p>ID: {task.attempts.at(-1)?.id}</p>
                 <p>Status: {task.attempts.at(-1)?.status}</p>
-                <p>Stage: {task.attempts.at(-1)?.stage}</p>
+                <p>Current step: {task.attempts.at(-1)?.currentStepKey ?? "n/a"}</p>
                 <p>Termination: {task.attempts.at(-1)?.terminationReason ?? "n/a"}</p>
               </div>
             ) : (

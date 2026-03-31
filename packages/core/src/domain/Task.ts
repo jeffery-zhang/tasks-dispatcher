@@ -1,4 +1,3 @@
-import type { AgentKind } from "./AgentKind.js";
 import type { ExecutionStage } from "./ExecutionStage.js";
 import type {
   TaskAttemptSnapshot,
@@ -7,13 +6,12 @@ import type {
 import { TaskAttempt } from "./TaskAttempt.js";
 import type { TaskState } from "./TaskState.js";
 import { TaskStateMachine } from "./TaskStateMachine.js";
-import { DEFAULT_WORKFLOW_ID, DEFAULT_WORKFLOW_LABEL } from "./TaskWorkflow.js";
+import { getTaskWorkflowDefinition } from "./TaskWorkflow.js";
 
 export interface TaskSnapshot {
   id: string;
   title: string;
   description: string;
-  agent: AgentKind;
   workflowId: string;
   workflowLabel: string;
   state: TaskState;
@@ -27,14 +25,14 @@ interface CreateDraftTaskInput {
   id: string;
   title: string;
   description: string;
-  agent: AgentKind;
+  workflowId: string;
   createdAt: Date;
 }
 
 interface UpdateTaskDraftInput {
   title: string;
   description: string;
-  agent: AgentKind;
+  workflowId: string;
   updatedAt: Date;
 }
 
@@ -47,9 +45,8 @@ export class Task {
   readonly #id: string;
   #title: string;
   #description: string;
-  #agent: AgentKind;
-  readonly #workflowId: string;
-  readonly #workflowLabel: string;
+  #workflowId: string;
+  #workflowLabel: string;
   #state: TaskState;
   readonly #createdAt: Date;
   #updatedAt: Date;
@@ -60,7 +57,6 @@ export class Task {
     id: string;
     title: string;
     description: string;
-    agent: AgentKind;
     workflowId: string;
     workflowLabel: string;
     state: TaskState;
@@ -72,7 +68,6 @@ export class Task {
     this.#id = props.id;
     this.#title = props.title;
     this.#description = props.description;
-    this.#agent = props.agent;
     this.#workflowId = props.workflowId;
     this.#workflowLabel = props.workflowLabel;
     this.#state = props.state;
@@ -83,11 +78,13 @@ export class Task {
   }
 
   static createDraft(input: CreateDraftTaskInput): Task {
+    const workflow = getTaskWorkflowDefinition(input.workflowId);
+
     return new Task({
       ...input,
-      workflowId: DEFAULT_WORKFLOW_ID,
-      workflowLabel: DEFAULT_WORKFLOW_LABEL,
-      state: "initializing",
+      workflowId: workflow.id,
+      workflowLabel: workflow.label,
+      state: "draft",
       updatedAt: input.createdAt
     });
   }
@@ -97,7 +94,6 @@ export class Task {
       id: snapshot.id,
       title: snapshot.title,
       description: snapshot.description,
-      agent: snapshot.agent,
       workflowId: snapshot.workflowId,
       workflowLabel: snapshot.workflowLabel,
       state: snapshot.state,
@@ -116,6 +112,10 @@ export class Task {
     return this.#state;
   }
 
+  get workflowId(): string {
+    return this.#workflowId;
+  }
+
   get currentAttemptId(): string | null {
     return this.#currentAttemptId;
   }
@@ -123,24 +123,29 @@ export class Task {
   updateDraft(input: UpdateTaskDraftInput): void {
     TaskStateMachine.assertCanEdit(this.#state);
 
+    const workflow = getTaskWorkflowDefinition(input.workflowId);
     this.#title = input.title;
     this.#description = input.description;
-    this.#agent = input.agent;
+    this.#workflowId = workflow.id;
+    this.#workflowLabel = workflow.label;
     this.#updatedAt = input.updatedAt;
   }
 
   queueForExecution(input: QueueTaskInput): void {
     TaskStateMachine.assertCanQueue(this.#state);
 
+    const workflow = getTaskWorkflowDefinition(this.#workflowId);
     const attempt = TaskAttempt.createQueued({
       id: input.attemptId,
       taskId: this.#id,
-      agent: this.#agent,
+      workflowId: workflow.id,
+      workflowLabel: workflow.label,
+      steps: workflow.steps,
       createdAt: input.queuedAt
     });
 
     this.#attempts.push(attempt);
-    this.#state = "pending_execution";
+    this.#state = "ready";
     this.#currentAttemptId = attempt.id;
     this.#updatedAt = input.queuedAt;
   }
@@ -153,16 +158,21 @@ export class Task {
     this.#updatedAt = startedAt;
   }
 
-  moveCurrentAttemptToStage(stage: ExecutionStage, updatedAt: Date): void {
-    this.requireCurrentAttempt().moveToStage(stage);
+  startCurrentAttemptStep(stepKey: ExecutionStage, updatedAt: Date): void {
+    this.requireCurrentAttempt().startStep(stepKey, updatedAt);
     this.#updatedAt = updatedAt;
   }
 
-  markAwaitingValidation(finishedAt: Date): void {
-    TaskStateMachine.assertCanAwaitValidation(this.#state);
+  completeCurrentAttemptStep(stepKey: ExecutionStage, updatedAt: Date): void {
+    this.requireCurrentAttempt().completeStep(stepKey, updatedAt);
+    this.#updatedAt = updatedAt;
+  }
+
+  markCompleted(finishedAt: Date): void {
+    TaskStateMachine.assertCanComplete(this.#state);
 
     this.requireCurrentAttempt().markCompleted(finishedAt);
-    this.#state = "pending_validation";
+    this.#state = "completed";
     this.#updatedAt = finishedAt;
   }
 
@@ -173,7 +183,7 @@ export class Task {
     TaskStateMachine.assertCanFail(this.#state);
 
     this.requireCurrentAttempt().markFailed(terminationReason, finishedAt);
-    this.#state = "execution_failed";
+    this.#state = "failed";
     this.#updatedAt = finishedAt;
   }
 
@@ -185,7 +195,7 @@ export class Task {
   reopen(reopenedAt: Date): void {
     TaskStateMachine.assertCanReopen(this.#state);
 
-    this.#state = "reopened";
+    this.#state = "draft";
     this.#updatedAt = reopenedAt;
   }
 
@@ -201,7 +211,6 @@ export class Task {
       id: this.#id,
       title: this.#title,
       description: this.#description,
-      agent: this.#agent,
       workflowId: this.#workflowId,
       workflowLabel: this.#workflowLabel,
       state: this.#state,

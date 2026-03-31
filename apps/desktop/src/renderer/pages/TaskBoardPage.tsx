@@ -25,10 +25,14 @@ function toSummaryFromDetail(task: TaskDetailDto): TaskSummaryDto {
     title: task.title,
     description: task.description,
     state: task.state,
-    agent: task.agent,
+    workflowId: task.workflowId,
+    workflowLabel: task.workflowLabel,
     updatedAt: task.updatedAt,
     currentAttemptId: task.currentAttemptId,
-    currentAttemptTerminationReason: currentAttempt?.terminationReason ?? null
+    currentAttemptTerminationReason: currentAttempt?.terminationReason ?? null,
+    currentStepKey: task.currentStepKey,
+    currentStepStatus: task.currentStepStatus,
+    currentStepAgent: task.currentStepAgent
   };
 }
 

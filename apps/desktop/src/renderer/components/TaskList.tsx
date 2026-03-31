@@ -40,7 +40,7 @@ export function TaskList({ tasks, selectedTaskId, onSelect }: TaskListProps) {
                     <div>
                       <h3 className="font-semibold">{task.title}</h3>
                       <p className="mt-1 text-xs uppercase tracking-[0.14em] text-base-content/50">
-                        {task.agent}
+                        {task.workflowLabel}
                       </p>
                     </div>
                     <span className="badge badge-outline">{task.state}</span>
@@ -54,4 +54,3 @@ export function TaskList({ tasks, selectedTaskId, onSelect }: TaskListProps) {
     </section>
   );
 }
-

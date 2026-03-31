@@ -23,26 +23,26 @@ class InMemoryTaskRepository implements TaskRepository {
 }
 
 describe("TaskScheduler", () => {
-  it("starts pending tasks in FIFO order while respecting capacity", async () => {
+  it("starts ready tasks in FIFO order while respecting capacity", async () => {
     const firstTask = Task.createDraft({
       id: "task-1",
       title: "First",
       description: "Older",
-      agent: "codex-cli",
+      workflowId: "default-plan-work-review",
       createdAt: new Date("2026-03-29T00:00:00.000Z")
     });
     const secondTask = Task.createDraft({
       id: "task-2",
       title: "Second",
       description: "Middle",
-      agent: "codex-cli",
+      workflowId: "default-plan-work-review",
       createdAt: new Date("2026-03-29T00:00:10.000Z")
     });
     const thirdTask = Task.createDraft({
       id: "task-3",
       title: "Third",
       description: "Newest",
-      agent: "claude-code",
+      workflowId: "default-plan-work-review",
       createdAt: new Date("2026-03-29T00:00:20.000Z")
     });
 

@@ -3,13 +3,14 @@ import { dirname } from "node:path";
 import type { AttemptResultPaths } from "../agents/AgentRuntime.js";
 import {
   ATTEMPT_RESULT_SCHEMA_VERSION,
-  type AttemptSuccessResult
+  type AttemptResult
 } from "../agents/wrapper/AgentAttemptWrapperProtocol.js";
 import { WorkspacePaths } from "../bootstrap/WorkspacePaths.js";
 
 interface AttemptResultIdentity {
   taskId: string;
   attemptId: string;
+  stepKey: string;
 }
 
 export class AttemptResultFileStore {
@@ -26,27 +27,37 @@ export class AttemptResultFileStore {
     };
   }
 
-  read(
-    taskId: string,
-    attemptId: string
-  ): AttemptSuccessResult | null {
-    return AttemptResultFileStore.readFromPath(
-      this.#paths.getAttemptResultPath(taskId, attemptId),
-      { taskId, attemptId }
-    );
+  clear(taskId: string, attemptId: string): void {
+    const paths = this.getPaths(taskId, attemptId);
+    rmSync(paths.finalPath, { force: true });
+    rmSync(paths.tempPath, { force: true });
   }
 
-  static writeAtomic(
-    paths: AttemptResultPaths,
-    result: AttemptSuccessResult
-  ): void {
+  read(taskId: string, attemptId: string): AttemptResult | null {
+    const filePath = this.#paths.getAttemptResultPath(taskId, attemptId);
+
+    try {
+      const parsed = JSON.parse(readFileSync(filePath, "utf8")) as Partial<AttemptResult>;
+
+      if (!AttemptResultFileStore.isValidLoose(parsed, { taskId, attemptId })) {
+        return null;
+      }
+
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  static writeAtomic(paths: AttemptResultPaths, result: AttemptResult): void {
     mkdirSync(dirname(paths.finalPath), { recursive: true });
     rmSync(paths.tempPath, { force: true });
     writeFileSync(paths.tempPath, JSON.stringify(result), "utf8");
 
     const validated = AttemptResultFileStore.readFromPath(paths.tempPath, {
       taskId: result.taskId,
-      attemptId: result.attemptId
+      attemptId: result.attemptId,
+      stepKey: result.stepKey
     });
 
     if (!validated) {
@@ -61,11 +72,9 @@ export class AttemptResultFileStore {
   static readFromPath(
     filePath: string,
     expected: AttemptResultIdentity
-  ): AttemptSuccessResult | null {
+  ): AttemptResult | null {
     try {
-      const parsed = JSON.parse(
-        readFileSync(filePath, "utf8")
-      ) as Partial<AttemptSuccessResult>;
+      const parsed = JSON.parse(readFileSync(filePath, "utf8")) as Partial<AttemptResult>;
 
       if (!AttemptResultFileStore.isValid(parsed, expected)) {
         return null;
@@ -77,30 +86,64 @@ export class AttemptResultFileStore {
     }
   }
 
-  static createSuccessResult(identity: AttemptResultIdentity): AttemptSuccessResult {
+  static createSuccessResult(identity: AttemptResultIdentity): AttemptResult {
     return {
       schemaVersion: ATTEMPT_RESULT_SCHEMA_VERSION,
       status: "completed",
       taskId: identity.taskId,
       attemptId: identity.attemptId,
+      stepKey: identity.stepKey as AttemptResult["stepKey"],
       finishedAt: new Date().toISOString()
     };
   }
 
+  static createFailureResult(
+    identity: AttemptResultIdentity,
+    failureReason: AttemptResult["failureReason"]
+  ): AttemptResult {
+    return {
+      schemaVersion: ATTEMPT_RESULT_SCHEMA_VERSION,
+      status: "failed",
+      taskId: identity.taskId,
+      attemptId: identity.attemptId,
+      stepKey: identity.stepKey as AttemptResult["stepKey"],
+      finishedAt: new Date().toISOString(),
+      failureReason: failureReason ?? null
+    };
+  }
+
   static isValid(
-    value: Partial<AttemptSuccessResult> | null | undefined,
+    value: Partial<AttemptResult> | null | undefined,
     expected: AttemptResultIdentity
-  ): value is AttemptSuccessResult {
+  ): value is AttemptResult {
+    if (!AttemptResultFileStore.isValidLoose(value, expected)) {
+      return false;
+    }
+
+    return value.stepKey === expected.stepKey;
+  }
+
+  private static isValidLoose(
+    value: Partial<AttemptResult> | null | undefined,
+    expected: { taskId: string; attemptId: string }
+  ): value is AttemptResult {
     if (!value) {
       return false;
     }
 
+    const hasFailureReason =
+      value.status === "failed"
+        ? typeof value.failureReason === "string" || value.failureReason === null
+        : true;
+
     return (
       value.schemaVersion === ATTEMPT_RESULT_SCHEMA_VERSION &&
-      value.status === "completed" &&
+      (value.status === "completed" || value.status === "failed") &&
       value.taskId === expected.taskId &&
       value.attemptId === expected.attemptId &&
-      typeof value.finishedAt === "string"
+      typeof value.stepKey === "string" &&
+      typeof value.finishedAt === "string" &&
+      hasFailureReason
     );
   }
 }

@@ -22,7 +22,7 @@ export function TaskSessionList({
           <div className="min-w-0">
             <h4 className="truncate font-medium">{attempt.id}</h4>
             <p className="mt-1 text-sm text-base-content/65">
-              {attempt.status} / {attempt.stage}
+              {attempt.status} / {attempt.currentStepKey ?? "terminal"}
             </p>
             {attempt.terminationReason ? (
               <p className="mt-1 text-xs text-base-content/50">

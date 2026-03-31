@@ -90,7 +90,7 @@ pnpm typecheck
 pnpm test
 pnpm build
 pnpm dev:desktop
-pnpm --filter @tasks-dispatcher/cli dev -- create --title "Example" --description "Example task" --agent codex-cli
+pnpm --filter @tasks-dispatcher/cli dev -- create --title "Example" --description "Example task" --workflow default-plan-work-review
 ```
 
 ## Testing Notes

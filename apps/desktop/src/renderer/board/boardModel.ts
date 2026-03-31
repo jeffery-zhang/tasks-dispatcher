@@ -4,7 +4,7 @@ export const BOARD_COLUMN_ORDER = [
   "draft",
   "ready",
   "running",
-  "review",
+  "completed",
   "failed",
   "archived"
 ] as const;
@@ -20,7 +20,7 @@ export const BOARD_COLUMNS: BoardColumnDefinition[] = [
   { key: "draft", title: "Draft" },
   { key: "ready", title: "Ready" },
   { key: "running", title: "Running" },
-  { key: "review", title: "Review" },
+  { key: "completed", title: "Completed" },
   { key: "failed", title: "Failed" },
   { key: "archived", title: "Archived" }
 ];
@@ -29,16 +29,15 @@ export function mapTaskStateToBoardColumn(
   state: TaskSummaryDto["state"] | TaskDetailDto["state"]
 ): BoardColumnKey {
   switch (state) {
-    case "initializing":
-    case "reopened":
+    case "draft":
       return "draft";
-    case "pending_execution":
+    case "ready":
       return "ready";
     case "executing":
       return "running";
-    case "pending_validation":
-      return "review";
-    case "execution_failed":
+    case "completed":
+      return "completed";
+    case "failed":
       return "failed";
     case "archived":
       return "archived";

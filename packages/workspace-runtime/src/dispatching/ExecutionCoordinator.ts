@@ -1,9 +1,7 @@
 import {
   TaskEvent,
-  TaskStateTransitionError,
   toTaskDetailDto,
   type Clock,
-  type ExecutionStage,
   type IdGenerator,
   type TaskDetailDto,
   type TaskEventStore,
@@ -20,11 +18,34 @@ import { AttemptAbortSignalStore } from "../persistence/AttemptAbortSignalStore.
 import { LocalEventBus } from "../events/LocalEventBus.js";
 
 interface ActiveExecution {
-  supervisor: AgentProcessSupervisor;
+  supervisor: AgentProcessSupervisor | null;
   completion: Promise<TaskDetailDto>;
+  resolveCompletion: (task: TaskDetailDto) => void;
+  rejectCompletion: (error: unknown) => void;
   abortRequested: boolean;
   attemptId: string;
   abortConfirmed: boolean;
+}
+
+function getCurrentAttempt(task: TaskDetailDto) {
+  const attempt = task.attempts.find((candidate) => candidate.id === task.currentAttemptId);
+
+  if (!attempt) {
+    throw new Error(`Task "${task.id}" has no current attempt DTO.`);
+  }
+
+  return attempt;
+}
+
+function getCurrentStep(task: TaskDetailDto) {
+  const attempt = getCurrentAttempt(task);
+  const step = attempt.steps.find((candidate) => candidate.key === attempt.currentStepKey);
+
+  if (!step) {
+    throw new Error(`Task "${task.id}" has no current step DTO.`);
+  }
+
+  return step;
 }
 
 export class ExecutionCoordinator {
@@ -88,96 +109,39 @@ export class ExecutionCoordinator {
 
     const task = await this.#taskRepository.getById(taskId);
 
-    if (!task || task.state !== "pending_execution") {
+    if (!task || task.state !== "ready") {
       return;
     }
 
     this.#concurrencyGate.acquire();
+
+    let resolveCompletion: (task: TaskDetailDto) => void = () => {};
+    let rejectCompletion: (error: unknown) => void = () => {};
+    const completion = new Promise<TaskDetailDto>((resolve, reject) => {
+      resolveCompletion = resolve;
+      rejectCompletion = reject;
+    });
+
+    this.#activeExecutions.set(taskId, {
+      supervisor: null,
+      completion,
+      resolveCompletion,
+      rejectCompletion,
+      abortRequested: false,
+      attemptId: task.currentAttemptId ?? "",
+      abortConfirmed: false
+    });
 
     try {
       task.markExecuting(this.#clock.now());
       await this.#taskRepository.save(task);
       await this.#appendTaskEvent(taskId, "execution_started");
       await this.#emitTaskUpdate(taskId);
-
-      const detail = toTaskDetailDto(task);
-      const runtime = this.#agentRuntimeRegistry.get(detail.agent);
-      const attemptId = task.currentAttemptId;
-
-      if (!attemptId) {
-        throw new Error(`Task "${taskId}" has no current attempt.`);
-      }
-
-      const childProcess = this.#childProcessRunner.start(
-        runtime.createLaunchSpec(detail, {
-          workspaceRoot: this.#workspaceRoot,
-          taskId,
-          attemptId,
-          resultPaths: this.#attemptResultFileStore.getPaths(taskId, attemptId),
-          abortSignalPath: this.#attemptAbortSignalStore.getPath(taskId, attemptId)
-        }),
-        this.#workspaceRoot
-      );
-      const supervisor = new AgentProcessSupervisor(childProcess);
-      let stageUpdateQueue = Promise.resolve();
-
-      let resolveCompletion: (task: TaskDetailDto) => void = () => {};
-      const completion = new Promise<TaskDetailDto>((resolve) => {
-        resolveCompletion = resolve;
-      });
-
-      supervisor.onChunk((event) => {
-        const attemptId = task.currentAttemptId;
-
-        if (!attemptId) {
-          return;
-        }
-
-        this.#taskLogFileStore.append(taskId, attemptId, event.chunk);
-        this.#eventBus.emit({
-          type: "task.log",
-          taskId,
-          attemptId,
-          chunk: event.chunk
-        });
-      });
-
-      supervisor.onStage((event) => {
-        stageUpdateQueue = stageUpdateQueue
-          .then(() => this.#advanceStage(taskId, event.stage))
-          .catch(() => undefined);
-      });
-
-      supervisor.onCompletionDeclared(() => {
-        stageUpdateQueue = stageUpdateQueue
-          .then(() => this.#advanceStage(taskId, "self_check"))
-          .catch(() => undefined);
-      });
-      supervisor.onAbortConfirmed(() => {
-        const activeExecution = this.#activeExecutions.get(taskId);
-
-        if (activeExecution) {
-          activeExecution.abortConfirmed = true;
-        }
-      });
-      supervisor.onExit((event) => {
-        void stageUpdateQueue
-          .catch(() => undefined)
-          .then(() => this.#settleTask(taskId, event))
-          .then(resolveCompletion);
-      });
-
-      supervisor.start();
-      this.#attemptAbortSignalStore.clear(taskId, attemptId);
-      this.#activeExecutions.set(taskId, {
-        supervisor,
-        completion,
-        abortRequested: false,
-        attemptId,
-        abortConfirmed: false
-      });
+      await this.#launchCurrentStep(taskId);
     } catch (error) {
+      this.#activeExecutions.delete(taskId);
       this.#concurrencyGate.release();
+      rejectCompletion(error);
       throw error;
     }
   }
@@ -206,119 +170,196 @@ export class ExecutionCoordinator {
     return activeExecution.completion;
   }
 
-  async #advanceStage(
-    taskId: string,
-    stage: ExecutionStage
-  ): Promise<void> {
+  async #launchCurrentStep(taskId: string): Promise<void> {
     const task = await this.#taskRepository.getById(taskId);
+    const activeExecution = this.#activeExecutions.get(taskId);
 
-    if (!task || task.state !== "executing") {
+    if (!task || task.state !== "executing" || !activeExecution) {
       return;
     }
 
-    try {
-      task.moveCurrentAttemptToStage(stage, this.#clock.now());
-      await this.#taskRepository.save(task);
-      await this.#appendTaskEvent(taskId, "execution_stage_changed");
-      await this.#emitTaskUpdate(taskId);
-    } catch (error) {
-      if (!(error instanceof Error)) {
-        throw error;
-      }
+    const detail = toTaskDetailDto(task);
+    const currentStep = getCurrentStep(detail);
+    const runtime = this.#agentRuntimeRegistry.get(currentStep.agent);
+    const attemptId = task.currentAttemptId;
 
-      if (!(error instanceof TaskStateTransitionError)) {
-        throw error;
-      }
+    if (!attemptId) {
+      throw new Error(`Task "${taskId}" has no current attempt.`);
     }
+
+    this.#attemptResultFileStore.clear(taskId, attemptId);
+    this.#attemptAbortSignalStore.clear(taskId, attemptId);
+
+    const childProcess = this.#childProcessRunner.start(
+      runtime.createLaunchSpec(detail, {
+        workspaceRoot: this.#workspaceRoot,
+        taskId,
+        attemptId,
+        stepKey: currentStep.key,
+        resultPaths: this.#attemptResultFileStore.getPaths(taskId, attemptId),
+        abortSignalPath: this.#attemptAbortSignalStore.getPath(taskId, attemptId)
+      }),
+      this.#workspaceRoot
+    );
+
+    const supervisor = new AgentProcessSupervisor(childProcess);
+    activeExecution.supervisor = supervisor;
+    activeExecution.attemptId = attemptId;
+    activeExecution.abortConfirmed = false;
+
+    supervisor.onChunk((event) => {
+      this.#taskLogFileStore.append(taskId, attemptId, event.chunk);
+      this.#eventBus.emit({
+        type: "task.log",
+        taskId,
+        attemptId,
+        chunk: event.chunk
+      });
+    });
+
+    supervisor.onAbortConfirmed(() => {
+      const current = this.#activeExecutions.get(taskId);
+
+      if (current) {
+        current.abortConfirmed = true;
+      }
+    });
+
+    supervisor.onExit((event) => {
+      void this.#handleStepExit(taskId, event).catch((error) =>
+        this.#failActiveExecution(taskId, error)
+      );
+    });
+
+    supervisor.start();
   }
 
-  async #settleTask(
+  async #handleStepExit(
     taskId: string,
     exitEvent: {
       code: number | null;
       signal: NodeJS.Signals | null;
       reason: "startup_failed" | null;
     }
-  ): Promise<TaskDetailDto> {
-    try {
-      const task = await this.#taskRepository.getById(taskId);
+  ): Promise<void> {
+    const task = await this.#taskRepository.getById(taskId);
+    const activeExecution = this.#activeExecutions.get(taskId);
 
-      if (!task) {
-        throw new Error(`Task "${taskId}" was not found.`);
-      }
-
-      const activeExecution = this.#activeExecutions.get(taskId);
-      const currentAttemptId = task.currentAttemptId;
-
-      if (!currentAttemptId) {
-        throw new Error(`Task "${taskId}" has no current attempt.`);
-      }
-
-      const abortConfirmedFromLog = activeExecution?.abortRequested
-        ? this.#didWrapperConfirmAbort(taskId, currentAttemptId)
-        : false;
-      const abortConfirmed =
-        activeExecution?.abortRequested === true &&
-        (activeExecution.abortConfirmed === true ||
-          abortConfirmedFromLog ||
-          exitEvent.code === WRAPPER_ABORT_EXIT_CODE);
-      const attemptResult = this.#attemptResultFileStore.read(taskId, currentAttemptId);
-
-      if (abortConfirmed) {
-        task.markExecutionFailed("manually_aborted", this.#clock.now());
-        await this.#taskRepository.save(task);
-        await this.#appendTaskEvent(taskId, "task_aborted");
-      } else if (exitEvent.reason === "startup_failed") {
-        task.markExecutionFailed("startup_failed", this.#clock.now());
-        await this.#taskRepository.save(task);
-        await this.#appendTaskEvent(taskId, "execution_failed");
-      } else if (exitEvent.code === 0 && attemptResult) {
-        task.markAwaitingValidation(this.#clock.now());
-        await this.#taskRepository.save(task);
-        await this.#appendTaskEvent(taskId, "validation_requested");
-      } else if (exitEvent.code === 0) {
-        task.markExecutionFailed("protocol_failure", this.#clock.now());
-        await this.#taskRepository.save(task);
-        await this.#appendTaskEvent(taskId, "execution_failed");
-      } else if (exitEvent.signal) {
-        task.markExecutionFailed("signal_terminated", this.#clock.now());
-        await this.#taskRepository.save(task);
-        await this.#appendTaskEvent(taskId, "execution_failed");
-      } else {
-        task.markExecutionFailed("process_exit_non_zero", this.#clock.now());
-        await this.#taskRepository.save(task);
-        await this.#appendTaskEvent(taskId, "execution_failed");
-      }
-
-      const detail = toTaskDetailDto(task);
-
-      this.#activeExecutions.delete(taskId);
-      this.#attemptAbortSignalStore.clear(taskId, currentAttemptId);
-      this.#concurrencyGate.release();
-      await this.#emitTaskUpdate(taskId);
-      await this.#onSettled();
-
-      return detail;
-    } catch (error) {
-      const activeExecution = this.#activeExecutions.get(taskId);
-
-      this.#activeExecutions.delete(taskId);
-      if (activeExecution) {
-        this.#attemptAbortSignalStore.clear(taskId, activeExecution.attemptId);
-      }
-      this.#concurrencyGate.release();
-      await this.#onSettled();
-      throw error;
+    if (!task || !activeExecution) {
+      return;
     }
+
+    const currentAttemptId = task.currentAttemptId;
+
+    if (!currentAttemptId) {
+      throw new Error(`Task "${taskId}" has no current attempt.`);
+    }
+
+    const attemptResult = this.#attemptResultFileStore.read(taskId, currentAttemptId);
+    const abortConfirmedFromLog = activeExecution.abortRequested
+      ? this.#didWrapperConfirmAbort(taskId, currentAttemptId)
+      : false;
+    const abortConfirmed =
+      activeExecution.abortRequested &&
+      (activeExecution.abortConfirmed ||
+        abortConfirmedFromLog ||
+        exitEvent.code === WRAPPER_ABORT_EXIT_CODE);
+    const now = this.#clock.now();
+
+    if (abortConfirmed) {
+      task.markExecutionFailed("manually_aborted", now);
+      await this.#taskRepository.save(task);
+      await this.#appendTaskEvent(taskId, "task_aborted");
+      await this.#finalizeActiveExecution(taskId, toTaskDetailDto(task));
+      return;
+    }
+
+    if (exitEvent.reason === "startup_failed") {
+      task.markExecutionFailed("startup_failed", now);
+      await this.#taskRepository.save(task);
+      await this.#appendTaskEvent(taskId, "execution_failed");
+      await this.#finalizeActiveExecution(taskId, toTaskDetailDto(task));
+      return;
+    }
+
+    if (attemptResult?.status === "failed") {
+      task.markExecutionFailed(attemptResult.failureReason ?? "protocol_failure", now);
+      await this.#taskRepository.save(task);
+      await this.#appendTaskEvent(taskId, "execution_failed");
+      await this.#finalizeActiveExecution(taskId, toTaskDetailDto(task));
+      return;
+    }
+
+    if (exitEvent.code === 0 && attemptResult?.status === "completed") {
+      task.completeCurrentAttemptStep(attemptResult.stepKey, now);
+
+      const nextDetail = toTaskDetailDto(task);
+      const nextStepKey = nextDetail.currentStepKey;
+
+      if (nextStepKey) {
+        task.startCurrentAttemptStep(nextStepKey, now);
+        await this.#taskRepository.save(task);
+        await this.#appendTaskEvent(taskId, "execution_step_changed");
+        await this.#emitTaskUpdate(taskId);
+        await this.#launchCurrentStep(taskId);
+        return;
+      }
+
+      task.markCompleted(now);
+      await this.#taskRepository.save(task);
+      await this.#appendTaskEvent(taskId, "task_completed");
+      await this.#finalizeActiveExecution(taskId, toTaskDetailDto(task));
+      return;
+    }
+
+    if (exitEvent.code === 0) {
+      task.markExecutionFailed("protocol_failure", now);
+    } else if (exitEvent.signal) {
+      task.markExecutionFailed("signal_terminated", now);
+    } else {
+      task.markExecutionFailed("process_exit_non_zero", now);
+    }
+
+    await this.#taskRepository.save(task);
+    await this.#appendTaskEvent(taskId, "execution_failed");
+    await this.#finalizeActiveExecution(taskId, toTaskDetailDto(task));
+  }
+
+  async #finalizeActiveExecution(
+    taskId: string,
+    detail: TaskDetailDto
+  ): Promise<void> {
+    const activeExecution = this.#activeExecutions.get(taskId);
+
+    this.#activeExecutions.delete(taskId);
+    this.#attemptAbortSignalStore.clear(taskId, detail.currentAttemptId ?? "");
+    this.#concurrencyGate.release();
+    await this.#emitTaskUpdate(taskId);
+    await this.#onSettled();
+    activeExecution?.resolveCompletion(detail);
+  }
+
+  async #failActiveExecution(taskId: string, error: unknown): Promise<void> {
+    const activeExecution = this.#activeExecutions.get(taskId);
+
+    this.#activeExecutions.delete(taskId);
+
+    if (activeExecution) {
+      this.#attemptAbortSignalStore.clear(taskId, activeExecution.attemptId);
+    }
+
+    this.#concurrencyGate.release();
+    await this.#onSettled();
+    activeExecution?.rejectCompletion(error);
   }
 
   async #appendTaskEvent(
     taskId: string,
     type:
       | "execution_started"
-      | "execution_stage_changed"
+      | "execution_step_changed"
       | "execution_failed"
-      | "validation_requested"
+      | "task_completed"
       | "task_aborted"
   ): Promise<void> {
     await this.#taskEventStore.append(

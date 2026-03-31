@@ -15,9 +15,11 @@ export class LocalAgentRuntimeRegistry implements AgentRuntimeRegistry {
     this.#runtimes = new Map(defaultRuntimes.map((runtime) => [runtime.kind, runtime]));
   }
 
-  assertSupported(agent: AgentKind): void {
-    if (!this.#runtimes.has(agent)) {
-      throw new Error(`Unsupported agent runtime "${agent}".`);
+  assertSupportedAgents(agents: AgentKind[]): void {
+    for (const agent of agents) {
+      if (!this.#runtimes.has(agent)) {
+        throw new Error(`Unsupported agent runtime "${agent}".`);
+      }
     }
   }
 
@@ -31,4 +33,3 @@ export class LocalAgentRuntimeRegistry implements AgentRuntimeRegistry {
     return runtime;
   }
 }
-

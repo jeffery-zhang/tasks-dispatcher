@@ -32,7 +32,7 @@ describe("WorkspaceRuntimeClient", () => {
     const created = await client.createTask({
       title: "Server-backed task",
       description: "Verify client-server flow",
-      agent: "claude-code"
+      workflowId: "default-plan-work-review"
     });
     const fetched = await client.getTask(created.id);
     const list = await client.listTasks();

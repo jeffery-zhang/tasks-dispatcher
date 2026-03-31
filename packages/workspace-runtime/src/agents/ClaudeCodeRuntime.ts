@@ -9,20 +9,17 @@ import {
 export class ClaudeCodeRuntime implements AgentRuntime {
   readonly kind = "claude-code" as const;
 
-  createLaunchSpec(
-    task: TaskDetailDto,
-    context: AgentLaunchContext
-  ) {
+  createLaunchSpec(task: TaskDetailDto, context: AgentLaunchContext) {
     return createAgentAttemptWrapperLaunchSpec(
       {
-      command: "claude",
-      args: [
-        "-p",
-        "--dangerously-skip-permissions",
-        "--permission-mode",
-        "bypassPermissions",
-        buildExecutionPrompt(task)
-      ]
+        command: "claude",
+        args: [
+          "-p",
+          "--dangerously-skip-permissions",
+          "--permission-mode",
+          "bypassPermissions",
+          buildExecutionPrompt(task)
+        ]
       },
       context
     );

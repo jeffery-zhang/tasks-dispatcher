@@ -1,6 +1,8 @@
-import { TaskEvent } from "../../domain/index.js";
 import { toTaskDetailDto } from "../../contracts/TaskDtos.js";
+import { TaskEvent } from "../../domain/index.js";
+import { getTaskWorkflowDefinition } from "../../domain/TaskWorkflow.js";
 import type {
+  AgentRuntimeRegistry,
   Clock,
   IdGenerator,
   TaskEventStore,
@@ -11,17 +13,20 @@ import { TaskNotFoundError } from "./TaskNotFoundError.js";
 export class QueueTaskService {
   readonly #taskRepository: TaskRepository;
   readonly #taskEventStore: TaskEventStore;
+  readonly #agentRuntimeRegistry: AgentRuntimeRegistry;
   readonly #clock: Clock;
   readonly #idGenerator: IdGenerator;
 
   constructor(deps: {
     taskRepository: TaskRepository;
     taskEventStore: TaskEventStore;
+    agentRuntimeRegistry: AgentRuntimeRegistry;
     clock: Clock;
     idGenerator: IdGenerator;
   }) {
     this.#taskRepository = deps.taskRepository;
     this.#taskEventStore = deps.taskEventStore;
+    this.#agentRuntimeRegistry = deps.agentRuntimeRegistry;
     this.#clock = deps.clock;
     this.#idGenerator = deps.idGenerator;
   }
@@ -32,6 +37,11 @@ export class QueueTaskService {
     if (!task) {
       throw new TaskNotFoundError(taskId);
     }
+
+    const workflow = getTaskWorkflowDefinition(task.workflowId);
+    this.#agentRuntimeRegistry.assertSupportedAgents(
+      workflow.steps.map((step) => step.agent)
+    );
 
     const now = this.#clock.now();
     task.queueForExecution({

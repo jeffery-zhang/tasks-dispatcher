@@ -10,14 +10,24 @@ describe("TaskSessionList", () => {
           {
             id: "attempt-1",
             status: "failed",
-            stage: "self_check",
-            terminationReason: "protocol_failure"
+            workflowId: "default-plan-work-review",
+            workflowLabel: "Default Plan / Work / Review",
+            currentStepKey: "review",
+            startedAt: "2026-03-29T00:01:00.000Z",
+            finishedAt: "2026-03-29T00:05:00.000Z",
+            terminationReason: "protocol_failure",
+            steps: []
           },
           {
             id: "attempt-2",
             status: "completed",
-            stage: "self_check",
-            terminationReason: null
+            workflowId: "default-plan-work-review",
+            workflowLabel: "Default Plan / Work / Review",
+            currentStepKey: null,
+            startedAt: "2026-03-29T00:01:00.000Z",
+            finishedAt: "2026-03-29T00:05:00.000Z",
+            terminationReason: null,
+            steps: []
           }
         ]}
         onOpenSessionDetails={vi.fn()}

@@ -3,29 +3,22 @@ import { describe, expect, it } from "vitest";
 import { AgentProcessSupervisor } from "../../src/dispatching/AgentProcessSupervisor.js";
 
 describe("AgentProcessSupervisor", () => {
-  it("parses stage markers from stdout and reports raw close metadata", async () => {
+  it("streams stdout chunks and reports raw close metadata", async () => {
     const childProcess = spawn(
       process.execPath,
-      [
-        "-e",
-        [
-          "console.log('TASKS_DISPATCHER_STAGE:plan');",
-          "console.log('TASKS_DISPATCHER_STAGE:develop');",
-          "console.log('TASKS_DISPATCHER_STAGE:self_check');"
-        ].join("")
-      ],
+      ["-e", "console.log('hello from child')"],
       { stdio: "pipe" }
     );
     const supervisor = new AgentProcessSupervisor(childProcess);
-    const stages: string[] = [];
+    let output = "";
 
     const completion = new Promise<{
       code: number | null;
       signal: NodeJS.Signals | null;
       reason: "startup_failed" | null;
     }>((resolve) => {
-      supervisor.onStage((event) => {
-        stages.push(event.stage);
+      supervisor.onChunk((event) => {
+        output += event.chunk;
       });
       supervisor.onExit((event) => {
         resolve(event);
@@ -39,31 +32,25 @@ describe("AgentProcessSupervisor", () => {
       signal: null,
       reason: null
     });
-    expect(stages).toEqual(["plan", "develop", "self_check"]);
+    expect(output).toContain("hello from child");
   });
 
-  it("still emits a completion declaration marker without treating it as final success", async () => {
+  it("emits abort confirmation when the wrapper reports it", async () => {
     const childProcess = spawn(
       process.execPath,
-      [
-        "-e",
-        [
-          "console.log('TASKS_DISPATCHER_STAGE:plan');",
-          "console.log('TASKS_DISPATCHER_STAGE:complete');"
-        ].join("")
-      ],
+      ["-e", "console.log('TASKS_DISPATCHER_ABORT_CONFIRMED')"],
       { stdio: "pipe" }
     );
     const supervisor = new AgentProcessSupervisor(childProcess);
-    const completionDeclarations: boolean[] = [];
+    const abortConfirmations: boolean[] = [];
 
     const completion = new Promise<{
       code: number | null;
       signal: NodeJS.Signals | null;
       reason: "startup_failed" | null;
     }>((resolve) => {
-      supervisor.onCompletionDeclared(() => {
-        completionDeclarations.push(true);
+      supervisor.onAbortConfirmed(() => {
+        abortConfirmations.push(true);
       });
       supervisor.onExit((event) => {
         resolve(event);
@@ -77,6 +64,6 @@ describe("AgentProcessSupervisor", () => {
       signal: null,
       reason: null
     });
-    expect(completionDeclarations).toEqual([true]);
+    expect(abortConfirmations).toEqual([true]);
   });
 });

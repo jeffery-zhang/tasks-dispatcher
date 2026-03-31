@@ -20,7 +20,7 @@ export function TaskCard({
   onAbort
 }: TaskCardProps) {
   const failureReason =
-    task.state === "execution_failed"
+    task.state === "failed"
       ? formatTerminationReason(task.currentAttemptTerminationReason)
       : null;
 

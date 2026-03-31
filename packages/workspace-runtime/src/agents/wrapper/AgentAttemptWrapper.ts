@@ -6,8 +6,11 @@ import {
 } from "node:child_process";
 import { AttemptResultFileStore } from "../../persistence/AttemptResultFileStore.js";
 import {
+  ATTEMPT_RESULT_SCHEMA_VERSION,
   WRAPPER_ABORT_EXIT_CODE,
-  type AgentAttemptWrapperLaunchPayload
+  WRAPPER_RESULT_PREFIX,
+  type AgentAttemptWrapperLaunchPayload,
+  type AttemptResult
 } from "./AgentAttemptWrapperProtocol.js";
 
 function readPayloadFromStdin(): Promise<AgentAttemptWrapperLaunchPayload> {
@@ -120,15 +123,65 @@ async function terminateChildTree(
   return await waitForCloseWithin(childExit, 2_000);
 }
 
+function tryParseAttemptResultLine(
+  line: string,
+  payload: AgentAttemptWrapperLaunchPayload
+): AttemptResult | null {
+  const normalizedLine = line.trim();
+
+  if (!normalizedLine.startsWith(WRAPPER_RESULT_PREFIX)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(
+      normalizedLine.slice(WRAPPER_RESULT_PREFIX.length)
+    ) as Partial<AttemptResult>;
+    const hydrated: Partial<AttemptResult> = {
+      schemaVersion: ATTEMPT_RESULT_SCHEMA_VERSION,
+      taskId: payload.taskId,
+      attemptId: payload.attemptId,
+      stepKey: payload.stepKey,
+      ...parsed
+    };
+
+    return AttemptResultFileStore.isValid(hydrated, {
+      taskId: payload.taskId,
+      attemptId: payload.attemptId,
+      stepKey: payload.stepKey
+    })
+      ? hydrated
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function main(): Promise<void> {
   const payload = await readPayloadFromStdin();
   const childProcess = spawnTargetProcess(payload);
   const childExit = waitForChildExit(childProcess);
   let abortRequested = false;
   let abortPollTimer: NodeJS.Timeout | null = null;
+  let stdoutBuffer = "";
+  let attemptResult: AttemptResult | null = null;
 
   childProcess.stdout.on("data", (chunk: Buffer) => {
-    process.stdout.write(chunk);
+    const text = chunk.toString("utf8");
+
+    process.stdout.write(text);
+    stdoutBuffer += text;
+
+    const lines = stdoutBuffer.split(/\r?\n/);
+    stdoutBuffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      const parsed = tryParseAttemptResultLine(line, payload);
+
+      if (parsed) {
+        attemptResult = parsed;
+      }
+    }
   });
   childProcess.stderr.on("data", (chunk: Buffer) => {
     process.stderr.write(chunk);
@@ -180,19 +233,21 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (stdoutBuffer) {
+    const parsed = tryParseAttemptResultLine(stdoutBuffer, payload);
+
+    if (parsed) {
+      attemptResult = parsed;
+    }
+  }
+
   if (abortPollTimer) {
     clearInterval(abortPollTimer);
   }
   rmSync(payload.abortSignalPath, { force: true });
 
-  if (code === 0) {
-    AttemptResultFileStore.writeAtomic(
-      payload.resultPaths,
-      AttemptResultFileStore.createSuccessResult({
-        taskId: payload.taskId,
-        attemptId: payload.attemptId
-      })
-    );
+  if (code === 0 && attemptResult) {
+    AttemptResultFileStore.writeAtomic(payload.resultPaths, attemptResult);
     process.exit(0);
   }
 
