@@ -4,9 +4,13 @@ import type {
   TaskDetailDto,
   TaskSummaryDto,
   UpdateRuntimeTaskInput,
-  WorkspaceRuntimeEvent
+  WorkspaceRuntimeEvent,
 } from "@tasks-dispatcher/core/contracts";
-import { BOARD_COLUMNS, mapTaskStateToBoardColumn, sortBoardTasks } from "../board/boardModel.js";
+import {
+  BOARD_COLUMNS,
+  mapTaskStateToBoardColumn,
+  sortBoardTasks,
+} from "../board/boardModel.js";
 import { CreateTaskModal } from "../components/CreateTaskModal.js";
 import { DesktopStartupErrorState } from "../components/DesktopStartupErrorState.js";
 import { TaskBoardColumn } from "../components/TaskBoardColumn.js";
@@ -14,12 +18,13 @@ import { TaskDetailModal } from "../components/TaskDetailModal.js";
 import { TaskSessionDetailModal } from "../components/TaskSessionDetailModal.js";
 import {
   classifyDesktopStartupError,
-  type DesktopStartupError
+  type DesktopStartupError,
 } from "../startup/desktopStartup.js";
 
 function toSummaryFromDetail(task: TaskDetailDto): TaskSummaryDto {
   const currentAttempt =
-    task.attempts.find((attempt) => attempt.id === task.currentAttemptId) ?? null;
+    task.attempts.find((attempt) => attempt.id === task.currentAttemptId) ??
+    null;
 
   return {
     id: task.id,
@@ -33,7 +38,7 @@ function toSummaryFromDetail(task: TaskDetailDto): TaskSummaryDto {
     currentAttemptTerminationReason: currentAttempt?.terminationReason ?? null,
     currentStepKey: task.currentStepKey,
     currentStepStatus: task.currentStepStatus,
-    currentStepAgent: task.currentStepAgent
+    currentStepAgent: task.currentStepAgent,
   };
 }
 
@@ -57,26 +62,36 @@ export function TaskBoardPage() {
   const [tasks, setTasks] = useState<TaskSummaryDto[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<TaskDetailDto | null>(null);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
+    null
+  );
   const [selectedSessionLog, setSelectedSessionLog] = useState("");
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
   const [sessionDetailOpen, setSessionDetailOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
-  const [editingTask, setEditingTask] = useState<EditableTaskDraft | null>(null);
-  const [startupError, setStartupError] = useState<DesktopStartupError | null>(null);
+  const [editingTask, setEditingTask] = useState<EditableTaskDraft | null>(
+    null
+  );
+  const [startupError, setStartupError] = useState<DesktopStartupError | null>(
+    null
+  );
   const selectedTaskIdRef = useRef<string | null>(null);
   const selectedSessionIdRef = useRef<string | null>(null);
 
   const selectedAttempt =
-    selectedTask?.attempts.find((attempt) => attempt.id === selectedSessionId) ?? null;
+    selectedTask?.attempts.find(
+      (attempt) => attempt.id === selectedSessionId
+    ) ?? null;
 
   async function refreshTasks(): Promise<void> {
     const nextTasks = await window.taskBoardApi.listTasks();
     setTasks(sortBoardTasks(nextTasks));
   }
 
-  async function refreshTask(taskId: string | null): Promise<TaskDetailDto | null> {
+  async function refreshTask(
+    taskId: string | null
+  ): Promise<TaskDetailDto | null> {
     if (!taskId) {
       setSelectedTask(null);
       return null;
@@ -86,7 +101,9 @@ export function TaskBoardPage() {
     setSelectedTask(task);
 
     if (task) {
-      setTasks((currentTasks) => upsertTaskSummary(currentTasks, toSummaryFromDetail(task)));
+      setTasks((currentTasks) =>
+        upsertTaskSummary(currentTasks, toSummaryFromDetail(task))
+      );
     }
 
     return task;
@@ -102,7 +119,10 @@ export function TaskBoardPage() {
     }
 
     try {
-      const nextLog = await window.taskBoardApi.readAttemptLog(taskId, attemptId);
+      const nextLog = await window.taskBoardApi.readAttemptLog(
+        taskId,
+        attemptId
+      );
       setSelectedSessionLog(nextLog);
     } catch {
       setSelectedSessionLog("");
@@ -123,7 +143,8 @@ export function TaskBoardPage() {
 
     const bootstrap = async () => {
       try {
-        const { workspaceRoot: root } = await window.taskBoardApi.getWorkspaceInfo();
+        const { workspaceRoot: root } =
+          await window.taskBoardApi.getWorkspaceInfo();
 
         if (cancelled) {
           return;
@@ -131,26 +152,33 @@ export function TaskBoardPage() {
 
         setWorkspaceRoot(root);
         await refreshTasks();
-        unsubscribe = window.taskBoardApi.subscribe((event: WorkspaceRuntimeEvent) => {
-          if (event.type === "task.updated" && event.task) {
-            setTasks((currentTasks) =>
-              upsertTaskSummary(currentTasks, toSummaryFromDetail(event.task!))
-            );
+        unsubscribe = window.taskBoardApi.subscribe(
+          (event: WorkspaceRuntimeEvent) => {
+            if (event.type === "task.updated" && event.task) {
+              setTasks((currentTasks) =>
+                upsertTaskSummary(
+                  currentTasks,
+                  toSummaryFromDetail(event.task!)
+                )
+              );
 
-            if (event.taskId === selectedTaskIdRef.current) {
-              setSelectedTask(event.task);
+              if (event.taskId === selectedTaskIdRef.current) {
+                setSelectedTask(event.task);
+              }
+            }
+
+            if (
+              event.type === "task.log" &&
+              event.taskId === selectedTaskIdRef.current &&
+              event.attemptId === selectedSessionIdRef.current &&
+              event.chunk
+            ) {
+              setSelectedSessionLog(
+                (currentLog) => `${currentLog}${event.chunk}`
+              );
             }
           }
-
-          if (
-            event.type === "task.log" &&
-            event.taskId === selectedTaskIdRef.current &&
-            event.attemptId === selectedSessionIdRef.current &&
-            event.chunk
-          ) {
-            setSelectedSessionLog((currentLog) => `${currentLog}${event.chunk}`);
-          }
-        });
+        );
         setStartupError(null);
       } catch (error) {
         if (cancelled) {
@@ -171,7 +199,8 @@ export function TaskBoardPage() {
 
   useEffect(() => {
     const hasExecutingTasks =
-      tasks.some((task) => task.state === "executing") || selectedTask?.state === "executing";
+      tasks.some((task) => task.state === "executing") ||
+      selectedTask?.state === "executing";
 
     if (!hasExecutingTasks) {
       return;
@@ -205,7 +234,9 @@ export function TaskBoardPage() {
 
   async function createTask(input: CreateRuntimeTaskInput): Promise<void> {
     const task = await window.taskBoardApi.createTask(input);
-    setTasks((currentTasks) => upsertTaskSummary(currentTasks, toSummaryFromDetail(task)));
+    setTasks((currentTasks) =>
+      upsertTaskSummary(currentTasks, toSummaryFromDetail(task))
+    );
   }
 
   async function updateTask(
@@ -213,7 +244,9 @@ export function TaskBoardPage() {
     input: UpdateRuntimeTaskInput
   ): Promise<void> {
     const task = await window.taskBoardApi.updateTask(taskId, input);
-    setTasks((currentTasks) => upsertTaskSummary(currentTasks, toSummaryFromDetail(task)));
+    setTasks((currentTasks) =>
+      upsertTaskSummary(currentTasks, toSummaryFromDetail(task))
+    );
 
     if (selectedTaskIdRef.current === taskId) {
       setSelectedTask(task);
@@ -228,7 +261,7 @@ export function TaskBoardPage() {
         id: existingTask.id,
         title: existingTask.title,
         description: existingTask.description,
-        workflowId: existingTask.workflowId
+        workflowId: existingTask.workflowId,
       });
       setEditModalOpen(true);
       return;
@@ -245,7 +278,7 @@ export function TaskBoardPage() {
         id: task.id,
         title: task.title,
         description: task.description,
-        workflowId: task.workflowId
+        workflowId: task.workflowId,
       });
       setEditModalOpen(true);
     } catch (error) {
@@ -303,7 +336,9 @@ export function TaskBoardPage() {
   ): Promise<void> {
     try {
       const task = await action(taskId);
-      setTasks((currentTasks) => upsertTaskSummary(currentTasks, toSummaryFromDetail(task)));
+      setTasks((currentTasks) =>
+        upsertTaskSummary(currentTasks, toSummaryFromDetail(task))
+      );
 
       if (selectedTaskIdRef.current === taskId) {
         setSelectedTask(task);
@@ -327,19 +362,20 @@ export function TaskBoardPage() {
   const groupedTasks = BOARD_COLUMNS.map((column) => ({
     ...column,
     tasks: sortBoardTasks(
-      tasks.filter((task) => mapTaskStateToBoardColumn(task.state) === column.key)
-    )
+      tasks.filter(
+        (task) => mapTaskStateToBoardColumn(task.state) === column.key
+      )
+    ),
   }));
 
   return (
-    <main className="min-h-screen min-w-[1200px] overflow-x-auto bg-base-200 px-3 py-4">
-      <div className="flex w-full flex-col gap-4">
+    <main className="w-full h-full bg-base-200 px-3 py-4">
+      <div className="flex w-full h-full flex-col gap-4">
         <header className="flex items-center justify-between gap-4">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.24em] text-primary">
               Tasks Dispatcher
             </p>
-            <h1 className="text-4xl font-black tracking-tight">Agent Task Board</h1>
           </div>
 
           <button
@@ -351,7 +387,7 @@ export function TaskBoardPage() {
           </button>
         </header>
 
-        <section className="grid min-w-[1200px] grid-cols-6 gap-3">
+        <section className="grid grid-cols-6 gap-3 flex-1">
           {groupedTasks.map((column) => (
             <TaskBoardColumn
               key={column.key}
@@ -359,10 +395,18 @@ export function TaskBoardPage() {
               tasks={column.tasks}
               onOpenDetails={openTaskDetails}
               onEdit={openTaskEditor}
-              onQueue={(taskId) => runTaskAction(taskId, window.taskBoardApi.queueTask)}
-              onReopen={(taskId) => runTaskAction(taskId, window.taskBoardApi.reopenTask)}
-              onArchive={(taskId) => runTaskAction(taskId, window.taskBoardApi.archiveTask)}
-              onAbort={(taskId) => runTaskAction(taskId, window.taskBoardApi.abortTask)}
+              onQueue={(taskId) =>
+                runTaskAction(taskId, window.taskBoardApi.queueTask)
+              }
+              onReopen={(taskId) =>
+                runTaskAction(taskId, window.taskBoardApi.reopenTask)
+              }
+              onArchive={(taskId) =>
+                runTaskAction(taskId, window.taskBoardApi.archiveTask)
+              }
+              onAbort={(taskId) =>
+                runTaskAction(taskId, window.taskBoardApi.abortTask)
+              }
             />
           ))}
         </section>
@@ -390,19 +434,29 @@ export function TaskBoardPage() {
 
       <TaskDetailModal
         onAbort={() =>
-          selectedTaskId ? runTaskAction(selectedTaskId, window.taskBoardApi.abortTask) : Promise.resolve()
+          selectedTaskId
+            ? runTaskAction(selectedTaskId, window.taskBoardApi.abortTask)
+            : Promise.resolve()
         }
         onArchive={() =>
-          selectedTaskId ? runTaskAction(selectedTaskId, window.taskBoardApi.archiveTask) : Promise.resolve()
+          selectedTaskId
+            ? runTaskAction(selectedTaskId, window.taskBoardApi.archiveTask)
+            : Promise.resolve()
         }
         onClose={closeTaskDetails}
-        onEdit={() => (selectedTaskId ? openTaskEditor(selectedTaskId) : Promise.resolve())}
+        onEdit={() =>
+          selectedTaskId ? openTaskEditor(selectedTaskId) : Promise.resolve()
+        }
         onOpenSessionDetails={openSessionDetails}
         onQueue={() =>
-          selectedTaskId ? runTaskAction(selectedTaskId, window.taskBoardApi.queueTask) : Promise.resolve()
+          selectedTaskId
+            ? runTaskAction(selectedTaskId, window.taskBoardApi.queueTask)
+            : Promise.resolve()
         }
         onReopen={() =>
-          selectedTaskId ? runTaskAction(selectedTaskId, window.taskBoardApi.reopenTask) : Promise.resolve()
+          selectedTaskId
+            ? runTaskAction(selectedTaskId, window.taskBoardApi.reopenTask)
+            : Promise.resolve()
         }
         open={taskDetailOpen}
         task={selectedTask}
@@ -410,7 +464,9 @@ export function TaskBoardPage() {
 
       <TaskSessionDetailModal
         attempt={selectedAttempt}
-        isCurrentAttempt={selectedTask?.currentAttemptId === selectedAttempt?.id}
+        isCurrentAttempt={
+          selectedTask?.currentAttemptId === selectedAttempt?.id
+        }
         log={selectedSessionLog}
         onClose={closeSessionDetails}
         open={sessionDetailOpen}
