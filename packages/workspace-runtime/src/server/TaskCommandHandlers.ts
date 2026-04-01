@@ -1,4 +1,7 @@
-import type { CreateRuntimeTaskInput } from "@tasks-dispatcher/core/contracts";
+import type {
+  CreateRuntimeTaskInput,
+  UpdateRuntimeTaskInput
+} from "@tasks-dispatcher/core/contracts";
 import { WorkspaceRuntimeService } from "./WorkspaceRuntimeService.js";
 
 export class TaskCommandHandlers {
@@ -10,6 +13,10 @@ export class TaskCommandHandlers {
 
   createTask(input: CreateRuntimeTaskInput) {
     return this.#service.createTask(input);
+  }
+
+  updateTask(taskId: string, input: UpdateRuntimeTaskInput) {
+    return this.#service.updateTask(taskId, input);
   }
 
   queueTask(taskId: string) {
@@ -28,4 +35,3 @@ export class TaskCommandHandlers {
     return this.#service.abortTask(taskId);
   }
 }
-

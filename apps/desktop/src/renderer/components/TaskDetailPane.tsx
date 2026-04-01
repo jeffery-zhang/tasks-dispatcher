@@ -4,6 +4,7 @@ import { TaskStatusActions } from "./TaskStatusActions.js";
 interface TaskDetailPaneProps {
   workspaceRoot: string;
   task: TaskDetailDto | null;
+  onEdit: () => Promise<void>;
   onQueue: () => Promise<void>;
   onReopen: () => Promise<void>;
   onArchive: () => Promise<void>;
@@ -13,6 +14,7 @@ interface TaskDetailPaneProps {
 export function TaskDetailPane({
   workspaceRoot,
   task,
+  onEdit,
   onQueue,
   onReopen,
   onArchive,
@@ -54,6 +56,7 @@ export function TaskDetailPane({
 
         <TaskStatusActions
           state={task.state}
+          onEdit={onEdit}
           onQueue={onQueue}
           onReopen={onReopen}
           onArchive={onArchive}

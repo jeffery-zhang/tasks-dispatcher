@@ -7,6 +7,7 @@ interface TaskDetailModalProps {
   task: TaskDetailDto | null;
   open: boolean;
   onClose: () => void;
+  onEdit: () => Promise<void>;
   onOpenSessionDetails: (attemptId: string) => void;
   onQueue: () => Promise<void>;
   onReopen: () => Promise<void>;
@@ -18,6 +19,7 @@ export function TaskDetailModal({
   task,
   open,
   onClose,
+  onEdit,
   onOpenSessionDetails,
   onQueue,
   onReopen,
@@ -40,6 +42,7 @@ export function TaskDetailModal({
           </div>
           <TaskStatusActions
             state={task.state}
+            onEdit={onEdit}
             onQueue={onQueue}
             onReopen={onReopen}
             onArchive={onArchive}

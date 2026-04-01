@@ -1,5 +1,6 @@
 import type {
   CreateRuntimeTaskInput,
+  UpdateRuntimeTaskInput,
   WorkspaceRuntimeApi,
   WorkspaceRuntimeEvent
 } from "@tasks-dispatcher/core/contracts";
@@ -39,6 +40,13 @@ export class WorkspaceRuntimeClient implements WorkspaceRuntimeApi {
 
   async createTask(input: CreateRuntimeTaskInput): Promise<TaskDetailDto> {
     return this.#post<TaskDetailDto>("/tasks", input);
+  }
+
+  async updateTask(
+    taskId: string,
+    input: UpdateRuntimeTaskInput
+  ): Promise<TaskDetailDto> {
+    return this.#post<TaskDetailDto>(`/tasks/${taskId}/update`, input);
   }
 
   async queueTask(taskId: string): Promise<TaskDetailDto> {

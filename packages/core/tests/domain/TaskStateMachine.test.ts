@@ -31,8 +31,9 @@ describe("TaskStateMachine", () => {
     );
   });
 
-  it("only allows archiving from completed", () => {
+  it("allows archiving from completed and failed", () => {
     expect(() => TaskStateMachine.assertCanArchive("completed")).not.toThrow();
+    expect(() => TaskStateMachine.assertCanArchive("failed")).not.toThrow();
     expect(() => TaskStateMachine.assertCanArchive("draft")).toThrow(
       TaskStateTransitionError
     );

@@ -3,6 +3,7 @@ import type {
   CreateRuntimeTaskInput,
   TaskDetailDto,
   TaskSummaryDto,
+  UpdateRuntimeTaskInput,
   WorkspaceRuntimeEvent
 } from "@tasks-dispatcher/core/contracts";
 import { BOARD_COLUMNS, mapTaskStateToBoardColumn, sortBoardTasks } from "../board/boardModel.js";
@@ -44,6 +45,13 @@ function upsertTaskSummary(
   return sortBoardTasks([nextTask, ...otherTasks]);
 }
 
+interface EditableTaskDraft {
+  id: string;
+  title: string;
+  description: string;
+  workflowId: string;
+}
+
 export function TaskBoardPage() {
   const [workspaceRoot, setWorkspaceRoot] = useState("loading...");
   const [tasks, setTasks] = useState<TaskSummaryDto[]>([]);
@@ -54,6 +62,8 @@ export function TaskBoardPage() {
   const [taskDetailOpen, setTaskDetailOpen] = useState(false);
   const [sessionDetailOpen, setSessionDetailOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<EditableTaskDraft | null>(null);
   const [startupError, setStartupError] = useState<DesktopStartupError | null>(null);
   const selectedTaskIdRef = useRef<string | null>(null);
   const selectedSessionIdRef = useRef<string | null>(null);
@@ -198,6 +208,56 @@ export function TaskBoardPage() {
     setTasks((currentTasks) => upsertTaskSummary(currentTasks, toSummaryFromDetail(task)));
   }
 
+  async function updateTask(
+    taskId: string,
+    input: UpdateRuntimeTaskInput
+  ): Promise<void> {
+    const task = await window.taskBoardApi.updateTask(taskId, input);
+    setTasks((currentTasks) => upsertTaskSummary(currentTasks, toSummaryFromDetail(task)));
+
+    if (selectedTaskIdRef.current === taskId) {
+      setSelectedTask(task);
+    }
+  }
+
+  async function openTaskEditor(taskId: string): Promise<void> {
+    const existingTask = tasks.find((task) => task.id === taskId);
+
+    if (existingTask) {
+      setEditingTask({
+        id: existingTask.id,
+        title: existingTask.title,
+        description: existingTask.description,
+        workflowId: existingTask.workflowId
+      });
+      setEditModalOpen(true);
+      return;
+    }
+
+    try {
+      const task = await window.taskBoardApi.getTask(taskId);
+
+      if (!task) {
+        return;
+      }
+
+      setEditingTask({
+        id: task.id,
+        title: task.title,
+        description: task.description,
+        workflowId: task.workflowId
+      });
+      setEditModalOpen(true);
+    } catch (error) {
+      setStartupError(classifyDesktopStartupError(error, workspaceRoot));
+    }
+  }
+
+  function closeTaskEditor(): void {
+    setEditModalOpen(false);
+    setEditingTask(null);
+  }
+
   async function openTaskDetails(taskId: string): Promise<void> {
     setSelectedTaskId(taskId);
     setTaskDetailOpen(true);
@@ -241,18 +301,22 @@ export function TaskBoardPage() {
     taskId: string,
     action: (taskId: string) => Promise<TaskDetailDto>
   ): Promise<void> {
-    const task = await action(taskId);
-    setTasks((currentTasks) => upsertTaskSummary(currentTasks, toSummaryFromDetail(task)));
+    try {
+      const task = await action(taskId);
+      setTasks((currentTasks) => upsertTaskSummary(currentTasks, toSummaryFromDetail(task)));
 
-    if (selectedTaskIdRef.current === taskId) {
-      setSelectedTask(task);
+      if (selectedTaskIdRef.current === taskId) {
+        setSelectedTask(task);
 
-      if (
-        selectedSessionIdRef.current &&
-        selectedSessionIdRef.current === task.currentAttemptId
-      ) {
-        await refreshSessionLog(task.id, selectedSessionIdRef.current);
+        if (
+          selectedSessionIdRef.current &&
+          selectedSessionIdRef.current === task.currentAttemptId
+        ) {
+          await refreshSessionLog(task.id, selectedSessionIdRef.current);
+        }
       }
+    } catch (error) {
+      setStartupError(classifyDesktopStartupError(error, workspaceRoot));
     }
   }
 
@@ -294,6 +358,7 @@ export function TaskBoardPage() {
               title={column.title}
               tasks={column.tasks}
               onOpenDetails={openTaskDetails}
+              onEdit={openTaskEditor}
               onQueue={(taskId) => runTaskAction(taskId, window.taskBoardApi.queueTask)}
               onReopen={(taskId) => runTaskAction(taskId, window.taskBoardApi.reopenTask)}
               onArchive={(taskId) => runTaskAction(taskId, window.taskBoardApi.archiveTask)}
@@ -305,8 +370,22 @@ export function TaskBoardPage() {
 
       <CreateTaskModal
         onClose={() => setCreateModalOpen(false)}
-        onCreate={createTask}
+        onSubmit={createTask}
         open={createModalOpen}
+      />
+
+      <CreateTaskModal
+        initialValue={editingTask ?? undefined}
+        mode="edit"
+        onClose={closeTaskEditor}
+        onSubmit={(input) => {
+          if (!editingTask) {
+            return Promise.resolve();
+          }
+
+          return updateTask(editingTask.id, input);
+        }}
+        open={editModalOpen}
       />
 
       <TaskDetailModal
@@ -317,6 +396,7 @@ export function TaskBoardPage() {
           selectedTaskId ? runTaskAction(selectedTaskId, window.taskBoardApi.archiveTask) : Promise.resolve()
         }
         onClose={closeTaskDetails}
+        onEdit={() => (selectedTaskId ? openTaskEditor(selectedTaskId) : Promise.resolve())}
         onOpenSessionDetails={openSessionDetails}
         onQueue={() =>
           selectedTaskId ? runTaskAction(selectedTaskId, window.taskBoardApi.queueTask) : Promise.resolve()

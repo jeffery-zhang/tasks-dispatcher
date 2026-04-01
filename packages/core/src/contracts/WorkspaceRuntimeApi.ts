@@ -2,10 +2,17 @@ import type { TaskDetailDto, TaskSummaryDto } from "./TaskDtos.js";
 
 import {
   DEFAULT_WORKFLOW_ID,
-  DEFAULT_WORKFLOW_LABEL
+  DEFAULT_WORKFLOW_LABEL,
+  listTaskWorkflows
 } from "../domain/TaskWorkflow.js";
 
 export interface CreateRuntimeTaskInput {
+  title: string;
+  description: string;
+  workflowId: string;
+}
+
+export interface UpdateRuntimeTaskInput {
   title: string;
   description: string;
   workflowId: string;
@@ -22,7 +29,13 @@ export const DEFAULT_TASK_WORKFLOW_OPTION = {
 } as const satisfies TaskWorkflowOptionDto;
 
 export const TASK_WORKFLOW_OPTIONS = [
-  DEFAULT_TASK_WORKFLOW_OPTION
+  DEFAULT_TASK_WORKFLOW_OPTION,
+  ...listTaskWorkflows()
+    .filter((workflow) => workflow.id !== DEFAULT_WORKFLOW_ID)
+    .map((workflow) => ({
+      id: workflow.id,
+      label: workflow.label
+    }))
 ] as const satisfies readonly TaskWorkflowOptionDto[];
 
 export interface WorkspaceRuntimeEvent {
@@ -38,6 +51,7 @@ export interface WorkspaceRuntimeApi {
   listTasks(): Promise<TaskSummaryDto[]>;
   getTask(taskId: string): Promise<TaskDetailDto | null>;
   createTask(input: CreateRuntimeTaskInput): Promise<TaskDetailDto>;
+  updateTask(taskId: string, input: UpdateRuntimeTaskInput): Promise<TaskDetailDto>;
   queueTask(taskId: string): Promise<TaskDetailDto>;
   reopenTask(taskId: string): Promise<TaskDetailDto>;
   archiveTask(taskId: string): Promise<TaskDetailDto>;

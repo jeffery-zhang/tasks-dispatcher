@@ -4,10 +4,12 @@ import {
   GetTaskBoardService,
   ReopenTaskService,
   QueueTaskService,
+  UpdateTaskService,
   TaskEvent,
   WorkspaceSession,
   toTaskDetailDto,
   type CreateRuntimeTaskInput,
+  type UpdateRuntimeTaskInput,
   type TaskDetailDto
 } from "@tasks-dispatcher/core";
 import { SystemClock } from "../bootstrap/SystemClock.js";
@@ -39,6 +41,7 @@ export class WorkspaceRuntimeService {
   readonly #scheduler: TaskScheduler;
   readonly #executionCoordinator: ExecutionCoordinator;
   readonly #createTaskService: CreateTaskService;
+  readonly #updateTaskService: UpdateTaskService;
   readonly #queueTaskService: QueueTaskService;
   readonly #reopenTaskService: ReopenTaskService;
   readonly #archiveTaskService: ArchiveTaskService;
@@ -88,6 +91,7 @@ export class WorkspaceRuntimeService {
     };
 
     this.#createTaskService = new CreateTaskService(serviceDeps);
+    this.#updateTaskService = new UpdateTaskService(serviceDeps);
     this.#queueTaskService = new QueueTaskService(serviceDeps);
     this.#reopenTaskService = new ReopenTaskService(serviceDeps);
     this.#archiveTaskService = new ArchiveTaskService(serviceDeps);
@@ -140,6 +144,16 @@ export class WorkspaceRuntimeService {
     const task = await this.#createTaskService.execute(input);
 
     this.#eventBus.emit({ type: "task.updated", taskId: task.id, task });
+    return task;
+  }
+
+  async updateTask(
+    taskId: string,
+    input: UpdateRuntimeTaskInput
+  ): Promise<TaskDetailDto> {
+    const task = await this.#updateTaskService.execute({ taskId, ...input });
+
+    this.#eventBus.emit({ type: "task.updated", taskId, task });
     return task;
   }
 

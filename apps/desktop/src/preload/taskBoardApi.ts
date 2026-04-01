@@ -3,6 +3,7 @@ import type {
   CreateRuntimeTaskInput,
   TaskDetailDto,
   TaskSummaryDto,
+  UpdateRuntimeTaskInput,
   WorkspaceRuntimeEvent
 } from "@tasks-dispatcher/core/contracts";
 import { TASK_BOARD_CHANNELS } from "../shared/ipcChannels.js";
@@ -21,6 +22,8 @@ const taskBoardApi = {
     >,
   createTask: (input: CreateRuntimeTaskInput) =>
     ipcRenderer.invoke(TASK_BOARD_CHANNELS.createTask, input) as Promise<TaskDetailDto>,
+  updateTask: (taskId: string, input: UpdateRuntimeTaskInput) =>
+    ipcRenderer.invoke(TASK_BOARD_CHANNELS.updateTask, taskId, input) as Promise<TaskDetailDto>,
   queueTask: (taskId: string) =>
     ipcRenderer.invoke(TASK_BOARD_CHANNELS.queueTask, taskId) as Promise<TaskDetailDto>,
   reopenTask: (taskId: string) =>

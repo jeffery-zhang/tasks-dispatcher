@@ -5,7 +5,7 @@ import { CreateTaskModal } from "../components/CreateTaskModal.js";
 describe("CreateTaskModal", () => {
   it("renders the create task modal fields when open", () => {
     const markup = renderToStaticMarkup(
-      <CreateTaskModal open={true} onClose={vi.fn()} onCreate={vi.fn()} />
+      <CreateTaskModal open={true} onClose={vi.fn()} onSubmit={vi.fn()} />
     );
 
     expect(markup).toContain("Add Task");

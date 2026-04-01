@@ -1,5 +1,6 @@
 export const TASK_EVENT_TYPES = [
   "task_created",
+  "task_updated",
   "task_queued",
   "execution_started",
   "execution_step_changed",

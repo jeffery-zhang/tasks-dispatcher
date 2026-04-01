@@ -45,19 +45,25 @@ export class RuntimeLauncher {
   }
 
   async connect(): Promise<WorkspaceRuntimeClient> {
-    const existing = await this.#loadHealthyClient();
+    if (!this.#shouldForceRespawn()) {
+      const existing = await this.#loadHealthyClient();
 
-    if (existing) {
-      return existing;
+      if (existing) {
+        return existing;
+      }
     }
 
     const release = await RuntimeLock.acquire(this.#paths.runtimeRoot);
 
     try {
-      const rechecked = await this.#loadHealthyClient();
+      if (this.#shouldForceRespawn()) {
+        await this.#stopExistingRuntimeIfAny();
+      } else {
+        const rechecked = await this.#loadHealthyClient();
 
-      if (rechecked) {
-        return rechecked;
+        if (rechecked) {
+          return rechecked;
+        }
       }
 
       await this.#spawnRuntimeProcess();
@@ -75,11 +81,26 @@ export class RuntimeLauncher {
     rmSync(this.#metadataPath, { force: true });
   }
 
-  async #loadHealthyClient(): Promise<WorkspaceRuntimeClient | null> {
+  #shouldForceRespawn(): boolean {
+    return this.#launchTarget?.mode === "tsx-source";
+  }
+
+  #readMetadata(): RuntimeMetadata | null {
     try {
-      const metadata = JSON.parse(
-        readFileSync(this.#metadataPath, "utf8")
-      ) as RuntimeMetadata;
+      return JSON.parse(readFileSync(this.#metadataPath, "utf8")) as RuntimeMetadata;
+    } catch {
+      return null;
+    }
+  }
+
+  async #loadHealthyClient(): Promise<WorkspaceRuntimeClient | null> {
+    const metadata = this.#readMetadata();
+
+    if (!metadata) {
+      return null;
+    }
+
+    try {
       const client = new WorkspaceRuntimeClient(
         `http://127.0.0.1:${metadata.port}`
       );
@@ -89,6 +110,51 @@ export class RuntimeLauncher {
       return client;
     } catch {
       return null;
+    }
+  }
+
+  async #stopExistingRuntimeIfAny(): Promise<void> {
+    const metadata = this.#readMetadata();
+
+    if (!metadata) {
+      return;
+    }
+
+    try {
+      process.kill(metadata.pid, "SIGTERM");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+
+      if (code !== "ESRCH") {
+        throw error;
+      }
+
+      this.clearMetadata();
+      return;
+    }
+
+    const timeoutAt = Date.now() + 10_000;
+
+    while (Date.now() < timeoutAt) {
+      if (!(await this.#canPing(metadata.port))) {
+        this.clearMetadata();
+        return;
+      }
+
+      await sleep(200);
+    }
+
+    throw new Error(
+      `Timed out waiting for workspace runtime ${metadata.pid} to stop.`
+    );
+  }
+
+  async #canPing(port: number): Promise<boolean> {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/health`);
+      return response.ok;
+    } catch {
+      return false;
     }
   }
 

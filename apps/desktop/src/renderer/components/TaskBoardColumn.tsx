@@ -5,6 +5,7 @@ interface TaskBoardColumnProps {
   title: string;
   tasks: TaskSummaryDto[];
   onOpenDetails: (taskId: string) => void;
+  onEdit: (taskId: string) => Promise<void>;
   onQueue: (taskId: string) => Promise<void>;
   onReopen: (taskId: string) => Promise<void>;
   onArchive: (taskId: string) => Promise<void>;
@@ -15,6 +16,7 @@ export function TaskBoardColumn({
   title,
   tasks,
   onOpenDetails,
+  onEdit,
   onQueue,
   onReopen,
   onArchive,
@@ -40,6 +42,7 @@ export function TaskBoardColumn({
               key={task.id}
               task={task}
               onOpenDetails={onOpenDetails}
+              onEdit={onEdit}
               onQueue={onQueue}
               onReopen={onReopen}
               onArchive={onArchive}

@@ -34,11 +34,18 @@ describe("WorkspaceRuntimeClient", () => {
       description: "Verify client-server flow",
       workflowId: "default-plan-work-review"
     });
+    const updated = await client.updateTask(created.id, {
+      title: "Updated server-backed task",
+      description: "Verify update flow",
+      workflowId: "default-plan-work-review"
+    });
     const fetched = await client.getTask(created.id);
     const list = await client.listTasks();
 
     expect(await client.ping()).toBe("workspace-runtime-ready");
+    expect(updated.title).toBe("Updated server-backed task");
     expect(fetched?.id).toBe(created.id);
+    expect(fetched?.title).toBe("Updated server-backed task");
     expect(list.some((task) => task.id === created.id)).toBe(true);
 
     await workspaceServer.close();

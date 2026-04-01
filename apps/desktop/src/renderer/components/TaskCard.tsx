@@ -5,6 +5,7 @@ import { formatTerminationReason } from "../board/failureLabels.js";
 interface TaskCardProps {
   task: TaskSummaryDto;
   onOpenDetails: (taskId: string) => void;
+  onEdit: (taskId: string) => Promise<void>;
   onQueue: (taskId: string) => Promise<void>;
   onReopen: (taskId: string) => Promise<void>;
   onArchive: (taskId: string) => Promise<void>;
@@ -14,6 +15,7 @@ interface TaskCardProps {
 export function TaskCard({
   task,
   onOpenDetails,
+  onEdit,
   onQueue,
   onReopen,
   onArchive,
@@ -60,6 +62,7 @@ export function TaskCard({
 
         <TaskStatusActions
           state={task.state}
+          onEdit={() => onEdit(task.id)}
           onQueue={() => onQueue(task.id)}
           onReopen={() => onReopen(task.id)}
           onArchive={() => onArchive(task.id)}

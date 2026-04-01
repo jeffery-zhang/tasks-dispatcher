@@ -140,6 +140,18 @@ export class WorkspaceServer {
           return;
         }
 
+        if (method === "POST" && pathSegments[2] === "update") {
+          writeJson(response, 200, {
+            task: await this.#commands.updateTask(
+              taskId,
+              (await readJsonBody(request)) as Parameters<
+                TaskCommandHandlers["updateTask"]
+              >[1]
+            )
+          });
+          return;
+        }
+
         if (
           method === "GET" &&
           pathSegments[2] === "attempts" &&

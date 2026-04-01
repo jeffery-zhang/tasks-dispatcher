@@ -165,6 +165,52 @@ async function main(): Promise<void> {
   let abortPollTimer: NodeJS.Timeout | null = null;
   let stdoutBuffer = "";
   let attemptResult: AttemptResult | null = null;
+  let wrapperExitInitiated = false;
+
+  const clearAbortWatch = () => {
+    if (abortPollTimer) {
+      clearInterval(abortPollTimer);
+      abortPollTimer = null;
+    }
+
+    rmSync(payload.abortSignalPath, { force: true });
+  };
+
+  const finalizeFromAttemptResult = async (result: AttemptResult) => {
+    if (wrapperExitInitiated || abortRequested) {
+      return;
+    }
+
+    wrapperExitInitiated = true;
+
+    try {
+      AttemptResultFileStore.writeAtomic(payload.resultPaths, result);
+    } catch (error) {
+      process.stderr.write(
+        `${error instanceof Error ? error.message : "Failed to persist attempt result."}\n`
+      );
+      clearAbortWatch();
+      process.exit(1);
+      return;
+    }
+
+    clearAbortWatch();
+
+    if (!(await waitForCloseWithin(childExit, 250))) {
+      await terminateChildTree(childProcess, childExit);
+    }
+
+    process.exit(0);
+  };
+
+  const handleParsedAttemptResult = (parsed: AttemptResult | null) => {
+    if (!parsed || attemptResult) {
+      return;
+    }
+
+    attemptResult = parsed;
+    void finalizeFromAttemptResult(parsed);
+  };
 
   childProcess.stdout.on("data", (chunk: Buffer) => {
     const text = chunk.toString("utf8");
@@ -176,17 +222,19 @@ async function main(): Promise<void> {
     stdoutBuffer = lines.pop() ?? "";
 
     for (const line of lines) {
-      const parsed = tryParseAttemptResultLine(line, payload);
-
-      if (parsed) {
-        attemptResult = parsed;
-      }
+      handleParsedAttemptResult(tryParseAttemptResultLine(line, payload));
     }
+
+    handleParsedAttemptResult(tryParseAttemptResultLine(stdoutBuffer, payload));
   });
   childProcess.stderr.on("data", (chunk: Buffer) => {
     process.stderr.write(chunk);
   });
   childProcess.on("error", (error) => {
+    if (wrapperExitInitiated) {
+      return;
+    }
+
     process.stderr.write(
       `${error instanceof Error ? error.message : "Unknown child process error."}\n`
     );
@@ -199,12 +247,8 @@ async function main(): Promise<void> {
     }
 
     abortRequested = true;
-    if (abortPollTimer) {
-      clearInterval(abortPollTimer);
-      abortPollTimer = null;
-    }
+    clearAbortWatch();
     const stopped = await terminateChildTree(childProcess, childExit);
-    rmSync(payload.abortSignalPath, { force: true });
     if (stopped) {
       process.stdout.write("TASKS_DISPATCHER_ABORT_CONFIRMED\n");
     }
@@ -229,22 +273,19 @@ async function main(): Promise<void> {
 
   const { code } = await childExit;
 
-  if (abortRequested) {
+  if (abortRequested || wrapperExitInitiated) {
     return;
   }
 
   if (stdoutBuffer) {
-    const parsed = tryParseAttemptResultLine(stdoutBuffer, payload);
+    handleParsedAttemptResult(tryParseAttemptResultLine(stdoutBuffer, payload));
 
-    if (parsed) {
-      attemptResult = parsed;
+    if (wrapperExitInitiated) {
+      return;
     }
   }
 
-  if (abortPollTimer) {
-    clearInterval(abortPollTimer);
-  }
-  rmSync(payload.abortSignalPath, { force: true });
+  clearAbortWatch();
 
   if (code === 0 && attemptResult) {
     AttemptResultFileStore.writeAtomic(payload.resultPaths, attemptResult);

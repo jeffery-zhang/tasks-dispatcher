@@ -26,6 +26,7 @@ describe("TaskCard", () => {
         task={task}
         onAbort={vi.fn()}
         onArchive={vi.fn()}
+        onEdit={vi.fn()}
         onOpenDetails={vi.fn()}
         onQueue={vi.fn()}
         onReopen={vi.fn()}
@@ -34,6 +35,7 @@ describe("TaskCard", () => {
 
     expect(markup).toContain("Implement grouped board");
     expect(markup).toContain("Details");
+    expect(markup).toContain("Edit");
     expect(markup).toContain("Queue");
     expect(markup).toContain("draft");
   });
@@ -49,6 +51,7 @@ describe("TaskCard", () => {
         }}
         onAbort={vi.fn()}
         onArchive={vi.fn()}
+        onEdit={vi.fn()}
         onOpenDetails={vi.fn()}
         onQueue={vi.fn()}
         onReopen={vi.fn()}

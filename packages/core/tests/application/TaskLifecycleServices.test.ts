@@ -5,7 +5,8 @@ import {
   CreateTaskService,
   GetTaskBoardService,
   QueueTaskService,
-  ReopenTaskService
+  ReopenTaskService,
+  UpdateTaskService
 } from "../../src/application/index.js";
 import { Task } from "../../src/domain/Task.js";
 import { TaskEvent } from "../../src/domain/TaskEvent.js";
@@ -123,6 +124,33 @@ describe("task lifecycle application services", () => {
     ]);
   });
 
+  it("updates a draft task and keeps it editable only in draft", async () => {
+    const deps = createServiceDependencies();
+    const createTaskService = new CreateTaskService(deps);
+    const updateTaskService = new UpdateTaskService(deps);
+
+    const createdTask = await createTaskService.execute({
+      title: "Initial title",
+      description: "Initial description",
+      workflowId: DEFAULT_WORKFLOW_ID
+    });
+
+    const updatedTask = await updateTaskService.execute({
+      taskId: createdTask.id,
+      title: "Updated title",
+      description: "Updated description",
+      workflowId: DEFAULT_WORKFLOW_ID
+    });
+
+    expect(updatedTask).toMatchObject({
+      id: createdTask.id,
+      state: "draft",
+      title: "Updated title",
+      description: "Updated description"
+    });
+    expect(deps.taskEventStore.events.at(-1)?.toSnapshot().type).toBe("task_updated");
+  });
+
   it("reopens a failed task and allows it to be queued again with a fresh attempt", async () => {
     const deps = createServiceDependencies();
     const createTaskService = new CreateTaskService(deps);
@@ -154,7 +182,7 @@ describe("task lifecycle application services", () => {
     expect(requeuedTask.attempts).toHaveLength(2);
   });
 
-  it("archives completed tasks and aborts executing tasks into failed", async () => {
+  it("archives completed or failed tasks and aborts executing tasks into failed", async () => {
     const deps = createServiceDependencies();
     const createTaskService = new CreateTaskService(deps);
     const queueTaskService = new QueueTaskService(deps);
@@ -209,6 +237,10 @@ describe("task lifecycle application services", () => {
     expect(abortedTask.attempts.at(-1)?.terminationReason).toBe(
       "manually_aborted"
     );
+
+    const archivedFailedTask = await archiveTaskService.execute(createdTaskTwo.id);
+
+    expect(archivedFailedTask.state).toBe("archived");
   });
 
   it("returns board tasks ordered by most recently updated", async () => {

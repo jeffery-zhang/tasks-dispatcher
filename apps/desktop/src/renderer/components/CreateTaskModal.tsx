@@ -1,4 +1,4 @@
-import { startTransition, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 import {
   DEFAULT_TASK_WORKFLOW_OPTION,
   TASK_WORKFLOW_OPTIONS,
@@ -9,13 +9,17 @@ import { OverlayModal } from "./OverlayModal.js";
 interface CreateTaskModalProps {
   open: boolean;
   onClose: () => void;
-  onCreate: (input: CreateRuntimeTaskInput) => Promise<void>;
+  mode?: "create" | "edit";
+  initialValue?: CreateRuntimeTaskInput;
+  onSubmit: (input: CreateRuntimeTaskInput) => Promise<void>;
 }
 
 export function CreateTaskModal({
   open,
   onClose,
-  onCreate
+  mode = "create",
+  initialValue,
+  onSubmit
 }: CreateTaskModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -24,12 +28,22 @@ export function CreateTaskModal({
   );
   const [submitting, setSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    setTitle(initialValue?.title ?? "");
+    setDescription(initialValue?.description ?? "");
+    setWorkflowId(initialValue?.workflowId ?? DEFAULT_TASK_WORKFLOW_OPTION.id);
+  }, [initialValue, open]);
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
 
     try {
-      await onCreate({ title, description, workflowId });
+      await onSubmit({ title, description, workflowId });
       startTransition(() => {
         setTitle("");
         setDescription("");
@@ -42,10 +56,12 @@ export function CreateTaskModal({
   }
 
   return (
-    <OverlayModal onClose={onClose} open={open} title="Add Task">
+    <OverlayModal onClose={onClose} open={open} title={mode === "edit" ? "Edit Task" : "Add Task"}>
       <form className="space-y-4" onSubmit={handleSubmit}>
         <div className="rounded-box border border-base-300 bg-base-200/40 p-4 text-sm text-base-content/65">
-          Current workflow catalog is fixed, but selection is still explicit.
+          {mode === "edit"
+            ? "Only draft tasks can be edited. Workflow selection is still explicit."
+            : "Current workflow catalog is fixed, but selection is still explicit."}
         </div>
 
         <label className="form-control gap-2">
@@ -90,7 +106,7 @@ export function CreateTaskModal({
             Cancel
           </button>
           <button className="btn btn-primary" disabled={submitting} type="submit">
-            {submitting ? "Creating..." : "Create Draft"}
+            {submitting ? (mode === "edit" ? "Saving..." : "Creating...") : mode === "edit" ? "Save Draft" : "Create Draft"}
           </button>
         </div>
       </form>

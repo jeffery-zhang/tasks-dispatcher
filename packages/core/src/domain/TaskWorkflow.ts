@@ -22,6 +22,10 @@ export interface TaskWorkflowSnapshot {
 
 export const DEFAULT_WORKFLOW_ID = "default-plan-work-review";
 export const DEFAULT_WORKFLOW_LABEL = "Default Plan / Work / Review";
+export const SMOKE_SUCCESS_WORKFLOW_ID = "smoke-plan-work-success";
+export const SMOKE_SUCCESS_WORKFLOW_LABEL = "Smoke Plan / Work Success";
+export const SMOKE_FAILURE_WORKFLOW_ID = "smoke-plan-work-failure";
+export const SMOKE_FAILURE_WORKFLOW_LABEL = "Smoke Plan / Work Failure";
 
 export const DEFAULT_TASK_WORKFLOW: TaskWorkflowDefinition = {
   id: DEFAULT_WORKFLOW_ID,
@@ -30,7 +34,7 @@ export const DEFAULT_TASK_WORKFLOW: TaskWorkflowDefinition = {
     {
       key: "plan",
       name: "plan",
-      agent: "claude-code",
+      agent: "codex-cli",
       prompt: "Plan the task, inspect the workspace, and decide the execution approach."
     },
     {
@@ -42,14 +46,58 @@ export const DEFAULT_TASK_WORKFLOW: TaskWorkflowDefinition = {
     {
       key: "review",
       name: "review",
-      agent: "claude-code",
+      agent: "codex-cli",
       prompt: "Review the completed work, run relevant checks, and summarize residual risk."
     }
   ]
 };
 
+export const SMOKE_SUCCESS_TASK_WORKFLOW: TaskWorkflowDefinition = {
+  id: SMOKE_SUCCESS_WORKFLOW_ID,
+  label: SMOKE_SUCCESS_WORKFLOW_LABEL,
+  steps: [
+    {
+      key: "plan",
+      name: "plan",
+      agent: "codex-cli",
+      prompt:
+        "This is a smoke-test workflow. Do not inspect or modify the workspace. Immediately print a completed TASKS_DISPATCHER_RESULT line for this step and exit."
+    },
+    {
+      key: "work",
+      name: "work",
+      agent: "codex-cli",
+      prompt:
+        "This is a smoke-test workflow. Do not inspect or modify the workspace. Immediately print a completed TASKS_DISPATCHER_RESULT line for this step and exit."
+    }
+  ]
+};
+
+export const SMOKE_FAILURE_TASK_WORKFLOW: TaskWorkflowDefinition = {
+  id: SMOKE_FAILURE_WORKFLOW_ID,
+  label: SMOKE_FAILURE_WORKFLOW_LABEL,
+  steps: [
+    {
+      key: "plan",
+      name: "plan",
+      agent: "codex-cli",
+      prompt:
+        "This is a smoke-test workflow. Do not inspect or modify the workspace. Immediately print a completed TASKS_DISPATCHER_RESULT line for this step and exit."
+    },
+    {
+      key: "work",
+      name: "work",
+      agent: "codex-cli",
+      prompt:
+        "This is a smoke-test workflow. Do not inspect or modify the workspace. Immediately print a failed TASKS_DISPATCHER_RESULT line with failureReason `needs_input` for this step and exit."
+    }
+  ]
+};
+
 const WORKFLOW_CATALOG = new Map<string, TaskWorkflowDefinition>([
-  [DEFAULT_TASK_WORKFLOW.id, DEFAULT_TASK_WORKFLOW]
+  [DEFAULT_TASK_WORKFLOW.id, DEFAULT_TASK_WORKFLOW],
+  [SMOKE_SUCCESS_TASK_WORKFLOW.id, SMOKE_SUCCESS_TASK_WORKFLOW],
+  [SMOKE_FAILURE_TASK_WORKFLOW.id, SMOKE_FAILURE_TASK_WORKFLOW]
 ]);
 
 function cloneWorkflow(

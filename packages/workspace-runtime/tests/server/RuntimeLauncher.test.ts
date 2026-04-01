@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { RuntimeLauncher } from "../../src/bootstrap/RuntimeLauncher.js";
 import { WorkspacePaths } from "../../src/bootstrap/WorkspacePaths.js";
@@ -109,6 +109,38 @@ afterEach(async () => {
 });
 
 describe("RuntimeLauncher", () => {
+  it("restarts a healthy tsx-source runtime so code changes are picked up", async () => {
+    const workspaceRoot = createWorkspaceRoot();
+    const launcher = new RuntimeLauncher(workspaceRoot, {
+      launchTarget: {
+        entryPath: resolve(
+          "packages",
+          "workspace-runtime",
+          "src",
+          "server",
+          "runtimeServerMain.ts"
+        ),
+        mode: "tsx-source"
+      }
+    });
+    const firstClient = await launcher.connect();
+
+    const created = await firstClient.createTask({
+      title: "Reload runtime task",
+      description: "Verify fresh tsx runtime",
+      workflowId: "default-plan-work-review"
+    });
+    const firstRuntime = readRuntimeMetadata(workspaceRoot);
+
+    const restartedClient = await launcher.connect();
+    const fetched = await restartedClient.getTask(created.id);
+    const secondRuntime = readRuntimeMetadata(workspaceRoot);
+
+    expect(await restartedClient.ping()).toBe("workspace-runtime-ready");
+    expect(fetched?.id).toBe(created.id);
+    expect(secondRuntime.pid).not.toBe(firstRuntime.pid);
+  });
+
   it("restarts the workspace runtime after the previous process exits", async () => {
     const workspaceRoot = createWorkspaceRoot();
     const launcher = new RuntimeLauncher(workspaceRoot);

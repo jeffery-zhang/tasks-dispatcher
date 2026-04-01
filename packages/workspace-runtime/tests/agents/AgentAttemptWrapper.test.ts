@@ -33,6 +33,9 @@ function createWrapperLikeTargetScript(scriptPath: string): void {
       "} else if (mode === 'abortable') {",
       "  console.log('waiting');",
       "  setInterval(() => {}, 1000);",
+      "} else if (mode === 'success-no-newline-hangs') {",
+      "  process.stdout.write('TASKS_DISPATCHER_RESULT:{\"status\":\"completed\",\"finishedAt\":\"2026-03-29T00:00:00.000Z\"}');",
+      "  setInterval(() => {}, 1000);",
       "} else {",
       "  process.exit(1);",
       "}",
@@ -113,6 +116,40 @@ describe("AgentAttemptWrapper", () => {
     ).toMatchObject({
       status: "completed",
       stepKey: "plan"
+    });
+  });
+
+  it("finishes after a valid result even if the child keeps running without a trailing newline", async () => {
+    const workspaceRoot = createWorkspaceRoot();
+    const targetScriptPath = join(workspaceRoot, "target.mjs");
+    const finalPath = join(workspaceRoot, "results", "task-1", "attempt-1.json");
+    const tempPath = join(workspaceRoot, "results", "task-1", "attempt-1.tmp.json");
+
+    createWrapperLikeTargetScript(targetScriptPath);
+
+    const outcome = await runWrapper({
+      workspaceRoot,
+      taskId: "task-1",
+      attemptId: "attempt-1",
+      stepKey: "review",
+      resultPaths: { finalPath, tempPath },
+      abortSignalPath: join(workspaceRoot, "abort", "task-1", "attempt-1.abort"),
+      target: {
+        command: process.execPath,
+        args: [targetScriptPath, "success-no-newline-hangs"]
+      }
+    });
+
+    expect(outcome.code).toBe(0);
+    expect(
+      AttemptResultFileStore.readFromPath(finalPath, {
+        taskId: "task-1",
+        attemptId: "attempt-1",
+        stepKey: "review"
+      })
+    ).toMatchObject({
+      status: "completed",
+      stepKey: "review"
     });
   });
 

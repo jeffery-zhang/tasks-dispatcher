@@ -22,10 +22,28 @@ function createTask(state: TaskDetailDto["state"]): TaskDetailDto {
 }
 
 describe("TaskStatusActions", () => {
-  it("shows only reopen for failed tasks", () => {
+  it("shows edit and queue for draft tasks", () => {
+    const markup = renderToStaticMarkup(
+      <TaskStatusActions
+        state={createTask("draft").state}
+        onEdit={vi.fn()}
+        onQueue={vi.fn()}
+        onReopen={vi.fn()}
+        onArchive={vi.fn()}
+        onAbort={vi.fn()}
+      />
+    );
+
+    expect(markup).toContain("Edit");
+    expect(markup).toContain("Queue");
+    expect(markup).not.toContain("Reopen");
+  });
+
+  it("shows reopen and archive for failed tasks", () => {
     const markup = renderToStaticMarkup(
       <TaskStatusActions
         state={createTask("failed").state}
+        onEdit={vi.fn()}
         onQueue={vi.fn()}
         onReopen={vi.fn()}
         onArchive={vi.fn()}
@@ -34,13 +52,14 @@ describe("TaskStatusActions", () => {
     );
 
     expect(markup).toContain("Reopen");
-    expect(markup).not.toContain("Archive");
+    expect(markup).toContain("Archive");
   });
 
   it("shows archive and reopen for completed tasks", () => {
     const markup = renderToStaticMarkup(
       <TaskStatusActions
         state={createTask("completed").state}
+        onEdit={vi.fn()}
         onQueue={vi.fn()}
         onReopen={vi.fn()}
         onArchive={vi.fn()}

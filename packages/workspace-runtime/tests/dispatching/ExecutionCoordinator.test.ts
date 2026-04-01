@@ -56,6 +56,9 @@ function writeWrapperLikeScript(scriptPath: string): void {
       "} else if (mode === 'abortable') {",
       "  console.log('running');",
       "  setInterval(() => {}, 1000);",
+      "} else if (mode === 'success-no-newline-hangs') {",
+      "  process.stdout.write('TASKS_DISPATCHER_RESULT:{\"status\":\"completed\",\"finishedAt\":\"2026-03-29T00:00:00.000Z\"}');",
+      "  setInterval(() => {}, 1000);",
       "} else {",
       "  process.exit(1);",
       "}",
@@ -365,6 +368,86 @@ describe("ExecutionCoordinator", () => {
       expect(failedTask.toSnapshot().attempts.at(-1)).toMatchObject({
         status: "failed",
         terminationReason: "needs_input"
+      });
+    } finally {
+      storage.close();
+      await wait(50);
+    }
+  });
+
+  it("completes the task when a step prints a valid result but does not exit cleanly on its own", async () => {
+    const workspaceRoot = createWorkspaceRoot();
+    const storage = WorkspaceStorage.open(workspaceRoot);
+    const repository = new SqliteTaskRepository(storage.database);
+    const taskEventStore = new SqliteTaskEventStore(storage.database);
+    const eventBus = new LocalEventBus();
+    const clock = new FixedClock();
+    const idGenerator = new IncrementingIdGenerator();
+    const wrapperScriptPath = join(workspaceRoot, "wrapper-like-script.mjs");
+
+    writeWrapperLikeScript(wrapperScriptPath);
+
+    const agentRuntimeRegistry = createRuntimeRegistry(
+      wrapperScriptPath,
+      "success-no-newline-hangs"
+    );
+    const concurrencyGate = new ConcurrencyGate(2);
+    let scheduler: TaskScheduler;
+    const executionCoordinator = new ExecutionCoordinator({
+      workspaceRoot,
+      taskRepository: repository,
+      taskEventStore,
+      agentRuntimeRegistry,
+      childProcessRunner: new NodeChildProcessRunner(),
+      taskLogFileStore: new TaskLogFileStore(storage.paths),
+      attemptResultFileStore: new AttemptResultFileStore(storage.paths),
+      attemptAbortSignalStore: new AttemptAbortSignalStore(storage.paths),
+      eventBus,
+      clock,
+      idGenerator,
+      concurrencyGate,
+      onSettled: async () => scheduler.kick()
+    });
+    scheduler = new TaskScheduler({
+      taskRepository: repository,
+      concurrencyGate,
+      executionCoordinator
+    });
+
+    const createTaskService = new CreateTaskService({
+      taskRepository: repository,
+      taskEventStore,
+      clock,
+      idGenerator
+    });
+    const queueTaskService = new QueueTaskService({
+      taskRepository: repository,
+      taskEventStore,
+      agentRuntimeRegistry,
+      clock,
+      idGenerator
+    });
+
+    try {
+      const createdTask = await createTaskService.execute({
+        title: "Result line without graceful exit",
+        description: "Exercise wrapper finalization path",
+        workflowId: DEFAULT_WORKFLOW_ID
+      });
+
+      await queueTaskService.execute(createdTask.id);
+      await scheduler.kick();
+
+      const completedTask = await waitForTaskState(
+        repository,
+        createdTask.id,
+        "completed"
+      );
+
+      expect(completedTask.toSnapshot().attempts.at(-1)).toMatchObject({
+        status: "completed",
+        currentStepKey: null,
+        terminationReason: null
       });
     } finally {
       storage.close();

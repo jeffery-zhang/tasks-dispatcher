@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain } from "electron";
 import type {
   CreateRuntimeTaskInput,
+  UpdateRuntimeTaskInput,
   TaskDetailDto,
   TaskSummaryDto,
   WorkspaceRuntimeEvent
@@ -67,6 +68,18 @@ export function registerTaskIpcHandlers(
     async (_event, input: CreateRuntimeTaskInput): Promise<TaskDetailDto> => {
       const client = await runtimeClientPromise;
       return client.createTask(input);
+    }
+  );
+
+  ipcMain.handle(
+    TASK_BOARD_CHANNELS.updateTask,
+    async (
+      _event,
+      taskId: string,
+      input: UpdateRuntimeTaskInput
+    ): Promise<TaskDetailDto> => {
+      const client = await runtimeClientPromise;
+      return client.updateTask(taskId, input);
     }
   );
 

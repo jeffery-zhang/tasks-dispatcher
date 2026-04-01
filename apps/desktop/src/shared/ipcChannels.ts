@@ -4,6 +4,7 @@ export const TASK_BOARD_CHANNELS = {
   listTasks: "task-board:list-tasks",
   getTask: "task-board:get-task",
   createTask: "task-board:create-task",
+  updateTask: "task-board:update-task",
   queueTask: "task-board:queue-task",
   reopenTask: "task-board:reopen-task",
   archiveTask: "task-board:archive-task",
@@ -11,4 +12,3 @@ export const TASK_BOARD_CHANNELS = {
   readAttemptLog: "task-board:read-attempt-log",
   runtimeEvent: "task-board:runtime-event"
 } as const;
-

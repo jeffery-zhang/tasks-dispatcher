@@ -3,6 +3,7 @@ import type { TaskState } from "./TaskState.js";
 const editableStates = new Set<TaskState>(["draft"]);
 const queueableStates = new Set<TaskState>(["draft"]);
 const reopenableStates = new Set<TaskState>(["completed", "failed"]);
+const archivableStates = new Set<TaskState>(["completed", "failed"]);
 
 export class TaskStateTransitionError extends Error {
   constructor(message: string) {
@@ -53,7 +54,11 @@ export class TaskStateMachine {
   }
 
   static assertCanArchive(state: TaskState): void {
-    TaskStateMachine.assertExactState(state, "completed", "archived");
+    if (!archivableStates.has(state)) {
+      throw new TaskStateTransitionError(
+        `Task in state "${state}" cannot transition to archived.`
+      );
+    }
   }
 
   static assertCanAbort(state: TaskState): void {
